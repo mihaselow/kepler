@@ -1,7 +1,7 @@
 use kepler::{
     ConfiguredLinearSolver, LinalgError, LinearSolver, LinearSolverBackend, LinearSolverOptions,
     NonlinearSolverOptions, NonlinearSystem, PreconditionerKind, TransientSolverOptions,
-    newton_solve, solve_linear_system, solve_linear_transient,
+    analyze_matrix, newton_solve, solve_linear_system, solve_linear_transient,
 };
 use sprs::TriMat;
 
@@ -121,6 +121,66 @@ fn jacobi_preconditioner_rejects_missing_diagonal() {
             value: 0.0,
         }
     );
+}
+
+#[test]
+fn matrix_diagnostics_identify_spd_like_matrix() {
+    let matrix = csr_matrix(
+        3,
+        &[
+            (0, 0, 4.0),
+            (0, 1, -1.0),
+            (1, 0, -1.0),
+            (1, 1, 3.0),
+            (2, 2, 2.0),
+        ],
+    );
+
+    let diagnostics = analyze_matrix(&matrix, 1.0e-12);
+
+    assert_eq!(diagnostics.sparsity.rows, 3);
+    assert_eq!(diagnostics.sparsity.cols, 3);
+    assert_eq!(diagnostics.sparsity.nonzeros, 5);
+    assert!(diagnostics.symmetry.is_square);
+    assert!(diagnostics.symmetry.structurally_symmetric);
+    assert!(diagnostics.symmetry.numerically_symmetric);
+    assert!(diagnostics.diagonal.all_positive);
+    assert_eq!(diagnostics.diagonal.zero_count, 0);
+    assert!(diagnostics.spd_heuristics.likely_spd);
+}
+
+#[test]
+fn matrix_diagnostics_report_nonsymmetry_and_sparsity() {
+    let matrix = csr_matrix(2, &[(0, 0, 1.0), (0, 1, 2.0), (1, 1, 1.0)]);
+
+    let diagnostics = analyze_matrix(&matrix, 1.0e-12);
+
+    assert_close(diagnostics.sparsity.density, 0.75);
+    assert!(!diagnostics.symmetry.structurally_symmetric);
+    assert!(!diagnostics.symmetry.numerically_symmetric);
+    assert_close(diagnostics.symmetry.max_abs_asymmetry, 2.0);
+    assert!(!diagnostics.spd_heuristics.likely_spd);
+}
+
+#[test]
+fn matrix_diagnostics_report_diagonal_health() {
+    let matrix = csr_matrix(
+        3,
+        &[
+            (0, 0, 0.0),
+            (0, 1, 2.0),
+            (1, 1, -1.0),
+            (2, 2, f64::INFINITY),
+        ],
+    );
+
+    let diagnostics = analyze_matrix(&matrix, 1.0e-12);
+
+    assert!(!diagnostics.diagonal.all_positive);
+    assert_eq!(diagnostics.diagonal.zero_count, 1);
+    assert_eq!(diagnostics.diagonal.non_finite_count, 1);
+    assert!(!diagnostics.diagonal.weakly_diagonally_dominant);
+    assert!(!diagnostics.spd_heuristics.positive_diagonal);
 }
 
 #[test]

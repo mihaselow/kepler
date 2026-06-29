@@ -31,6 +31,27 @@ Supported preconditioners:
 
 `SolverDiagnostics` reports backend, preconditioner, convergence status, iteration count, initial residual, final residual, and optional residual history.
 
+## Matrix Diagnostics
+
+Use `analyze_matrix` to inspect sparse matrices before choosing a solver or debugging convergence:
+
+```rust
+let diagnostics = analyze_matrix(&matrix, 1.0e-12);
+
+if diagnostics.spd_heuristics.likely_spd {
+    // CG is a reasonable first backend to try.
+}
+```
+
+The returned `MatrixDiagnostics` includes:
+
+- `SparsityStats`: rows, columns, nonzeros, density, and average row occupancy.
+- `SymmetryDiagnostics`: square/structural/numerical symmetry and maximum absolute asymmetry.
+- `DiagonalDiagnostics`: diagonal min/max, zero count, non-finite count, positive diagonal flag, and diagonal-dominance margin.
+- `SpdHeuristics`: a conservative hint based on square shape, numerical symmetry, finite positive diagonal entries, and diagonal health.
+
+These checks are heuristics, not proofs. They are intended for solver selection, validation warnings, and failure explanations.
+
 ## Compatibility API
 
 Existing physics modules still accept:

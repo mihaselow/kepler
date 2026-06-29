@@ -86,6 +86,50 @@ pub struct LinearSolverResult {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct MatrixDiagnostics {
+    pub sparsity: SparsityStats,
+    pub symmetry: SymmetryDiagnostics,
+    pub diagonal: DiagonalDiagnostics,
+    pub spd_heuristics: SpdHeuristics,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SparsityStats {
+    pub rows: usize,
+    pub cols: usize,
+    pub nonzeros: usize,
+    pub density: f64,
+    pub average_nonzeros_per_row: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SymmetryDiagnostics {
+    pub is_square: bool,
+    pub structurally_symmetric: bool,
+    pub numerically_symmetric: bool,
+    pub max_abs_asymmetry: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiagonalDiagnostics {
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub all_positive: bool,
+    pub zero_count: usize,
+    pub non_finite_count: usize,
+    pub min_diagonal_dominance_margin: Option<f64>,
+    pub weakly_diagonally_dominant: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpdHeuristics {
+    pub positive_diagonal: bool,
+    pub numerically_symmetric: bool,
+    pub weakly_diagonally_dominant: bool,
+    pub likely_spd: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct NonlinearSolverOptions {
     pub max_iterations: usize,
     pub tolerance: f64,
@@ -239,6 +283,28 @@ pub fn solve_linear_system(
         }
         LinearSolverBackend::Gmres => gmres_with_options(matrix, rhs, options),
         LinearSolverBackend::DenseDirect => dense_direct_solve(matrix, rhs, options),
+    }
+}
+
+pub fn analyze_matrix(matrix: &CsMat<f64>, symmetry_tolerance: f64) -> MatrixDiagnostics {
+    let sparsity = sparsity_stats(matrix);
+    let symmetry = symmetry_diagnostics(matrix, symmetry_tolerance);
+    let diagonal = diagonal_diagnostics(matrix);
+    let spd_heuristics = SpdHeuristics {
+        positive_diagonal: diagonal.all_positive,
+        numerically_symmetric: symmetry.numerically_symmetric,
+        weakly_diagonally_dominant: diagonal.weakly_diagonally_dominant,
+        likely_spd: symmetry.is_square
+            && symmetry.numerically_symmetric
+            && diagonal.all_positive
+            && diagonal.non_finite_count == 0,
+    };
+
+    MatrixDiagnostics {
+        sparsity,
+        symmetry,
+        diagonal,
+        spd_heuristics,
     }
 }
 
@@ -622,6 +688,111 @@ pub fn mul_csr_vec(matrix: &CsMat<f64>, vector: &[f64]) -> Vec<f64> {
         }
     }
     result
+}
+
+fn sparsity_stats(matrix: &CsMat<f64>) -> SparsityStats {
+    let rows = matrix.rows();
+    let cols = matrix.cols();
+    let nonzeros = matrix.nnz();
+    let entry_count = rows.saturating_mul(cols);
+    SparsityStats {
+        rows,
+        cols,
+        nonzeros,
+        density: if entry_count == 0 {
+            0.0
+        } else {
+            nonzeros as f64 / entry_count as f64
+        },
+        average_nonzeros_per_row: if rows == 0 {
+            0.0
+        } else {
+            nonzeros as f64 / rows as f64
+        },
+    }
+}
+
+fn symmetry_diagnostics(matrix: &CsMat<f64>, tolerance: f64) -> SymmetryDiagnostics {
+    let is_square = matrix.rows() == matrix.cols();
+    if !is_square {
+        return SymmetryDiagnostics {
+            is_square,
+            structurally_symmetric: false,
+            numerically_symmetric: false,
+            max_abs_asymmetry: f64::INFINITY,
+        };
+    }
+
+    let mut structurally_symmetric = true;
+    let mut max_abs_asymmetry: f64 = 0.0;
+    for row_index in 0..matrix.rows() {
+        for col_index in 0..matrix.cols() {
+            let value = matrix.get(row_index, col_index).copied().unwrap_or(0.0);
+            let transpose_value = matrix.get(col_index, row_index).copied().unwrap_or(0.0);
+            if (value == 0.0) != (transpose_value == 0.0) {
+                structurally_symmetric = false;
+            }
+            max_abs_asymmetry = max_abs_asymmetry.max((value - transpose_value).abs());
+        }
+    }
+
+    SymmetryDiagnostics {
+        is_square,
+        structurally_symmetric,
+        numerically_symmetric: max_abs_asymmetry <= tolerance,
+        max_abs_asymmetry,
+    }
+}
+
+fn diagonal_diagnostics(matrix: &CsMat<f64>) -> DiagonalDiagnostics {
+    let diagonal_count = matrix.rows().min(matrix.cols());
+    let mut min = None;
+    let mut max = None;
+    let mut all_positive = matrix.rows() == matrix.cols() && diagonal_count > 0;
+    let mut zero_count = 0;
+    let mut non_finite_count = 0;
+    let mut min_margin = None;
+    let mut weakly_diagonally_dominant = matrix.rows() == matrix.cols() && diagonal_count > 0;
+
+    for index in 0..diagonal_count {
+        let diagonal = matrix.get(index, index).copied().unwrap_or(0.0);
+        min = Some(min.map_or(diagonal, |value: f64| value.min(diagonal)));
+        max = Some(max.map_or(diagonal, |value: f64| value.max(diagonal)));
+        if diagonal == 0.0 {
+            zero_count += 1;
+        }
+        if !diagonal.is_finite() {
+            non_finite_count += 1;
+        }
+        if !diagonal.is_finite() || diagonal <= 0.0 {
+            all_positive = false;
+        }
+
+        let off_diagonal_sum = matrix
+            .outer_view(index)
+            .map(|row| {
+                row.iter()
+                    .filter(|(col_index, _)| *col_index != index)
+                    .map(|(_, value)| value.abs())
+                    .sum::<f64>()
+            })
+            .unwrap_or(0.0);
+        let margin = diagonal.abs() - off_diagonal_sum;
+        min_margin = Some(min_margin.map_or(margin, |value: f64| value.min(margin)));
+        if margin < -f64::EPSILON {
+            weakly_diagonally_dominant = false;
+        }
+    }
+
+    DiagonalDiagnostics {
+        min,
+        max,
+        all_positive,
+        zero_count,
+        non_finite_count,
+        min_diagonal_dominance_margin: min_margin,
+        weakly_diagonally_dominant,
+    }
 }
 
 fn validate_linear_system(matrix: &CsMat<f64>, rhs: &[f64]) -> Result<(), LinalgError> {

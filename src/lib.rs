@@ -54,10 +54,11 @@ pub use io::{
     vtk::{VtkScalarField, format_vtk_legacy, write_vtk_legacy_file},
 };
 pub use linalg::{
-    ConfiguredLinearSolver, LinalgError, LinearSolver, LinearSolverBackend, LinearSolverOptions,
-    NonlinearSolverDiagnostics, NonlinearSolverOptions, NonlinearSolverResult, NonlinearSystem,
-    PreconditionerKind, SolverDiagnostics, SolverOptions, TransientSolverOptions,
-    TransientStepResult, newton_solve, solve_linear_system, solve_linear_transient,
+    ConfiguredLinearSolver, DiagonalDiagnostics, LinalgError, LinearSolver, LinearSolverBackend,
+    LinearSolverOptions, MatrixDiagnostics, NonlinearSolverDiagnostics, NonlinearSolverOptions,
+    NonlinearSolverResult, NonlinearSystem, PreconditionerKind, SolverDiagnostics, SolverOptions,
+    SparsityStats, SpdHeuristics, SymmetryDiagnostics, TransientSolverOptions, TransientStepResult,
+    analyze_matrix, newton_solve, solve_linear_system, solve_linear_transient,
 };
 pub use mesh::{
     Cell, CellId, ElementKind, EntityDimension, FacetId, FieldId, MaterialId, Mesh, MeshError,
