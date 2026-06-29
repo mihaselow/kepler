@@ -122,4 +122,4 @@ curl -s http://127.0.0.1:3000/solve/poisson \
 
 ## Current Scope
 
-The REST API mirrors the current solver scope: `Tri3` meshes, constant conductivity, constant source terms, Dirichlet boundaries, and Conjugate Gradient solver options. It does not yet provide asynchronous job storage, uploaded mesh files, authentication, or multiple physics endpoints.
+The REST API mirrors the current solver scope: 2D `Tri3` meshes, constant conductivity, constant source terms, Dirichlet boundaries, and Conjugate Gradient solver options. The library mesh core has early dimension-aware topology primitives, but this endpoint does not yet accept generic `ElementKind` payloads or 3D meshes. It does not yet provide asynchronous job storage, uploaded mesh files, authentication, or multiple physics endpoints.

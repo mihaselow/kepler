@@ -11,4 +11,7 @@ pub use io::{
     solution::{format_solution, write_solution_file},
 };
 pub use linalg::SolverOptions;
-pub use mesh::{Mesh, MeshError, NodeId, Point2, Tri3};
+pub use mesh::{
+    Cell, CellId, ElementKind, EntityDimension, FacetId, FieldId, MaterialId, Mesh, MeshError,
+    MeshTopology, NodeId, Point2, Point3, PointD, Region, RegionId, Tri3,
+};

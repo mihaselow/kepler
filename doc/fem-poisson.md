@@ -11,6 +11,7 @@ The implementation uses first-order triangular elements (`Tri3`) over a 2D mesh.
 ## Supported Functionality
 
 - 2D points and triangular connectivity through `Mesh`, `Point2`, and `Tri3`.
+- Dimension-aware mesh core primitives through `PointD`, `Point3`, `Cell`, `ElementKind`, `Region`, and `MeshTopology`.
 - Constant positive scalar conductivity `k`.
 - Source term callback `f(x, y)` evaluated at each triangle centroid.
 - Dirichlet boundary conditions specified as `(node_id, value)` pairs.
@@ -21,7 +22,7 @@ The implementation uses first-order triangular elements (`Tri3`) over a 2D mesh.
 - `.solution` output with nodal values and diagnostics.
 - REST solves through the separate `server` binary.
 
-The solver does not yet support Neumann boundaries, spatially varying conductivity, preconditioning, or higher-order elements.
+The solver does not yet support Neumann boundaries, spatially varying conductivity, preconditioning, or higher-order elements. The platform mesh core now has early 3D/topology primitives, but the Poisson solver itself still solves 2D `Tri3` meshes only.
 
 ## Public API
 
@@ -46,6 +47,25 @@ let result = solve_poisson(&mesh, &problem, SolverOptions::default())?;
 ```
 
 `PoissonResult::values` contains one scalar value per mesh node. `iterations` and `residual_norm` report the Conjugate Gradient convergence behavior.
+
+## Mesh Core
+
+The current Poisson API keeps the original ergonomic 2D types:
+
+```rust
+let mesh = Mesh::new(points, triangles)?;
+```
+
+Underneath that compatibility layer, the mesh module now exposes platform-oriented primitives:
+
+- `PointD<D>` for dimension-aware coordinates.
+- `Point3` for 3D coordinates.
+- `ElementKind` for planned element families such as `Line2`, `Tri3`, `Quad4`, `Tet4`, and `Hex8`.
+- `Cell` for generic element connectivity.
+- `Region` and `EntityDimension` for named topology/geometry targets.
+- `MeshTopology<D>` for validating dimension-aware points, cells, and region assignments.
+
+`Mesh::topology()` converts the current 2D triangle mesh into `MeshTopology<2>`. This keeps existing solver behavior stable while preparing future region-targeted loads, CAD imports, and 3D elements.
 
 ## Mesh Requirements
 
