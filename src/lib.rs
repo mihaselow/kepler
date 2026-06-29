@@ -1,8 +1,14 @@
+pub mod annotation;
 pub mod fem;
 pub mod io;
 pub mod linalg;
 pub mod mesh;
 
+pub use annotation::{
+    AnnotationError, AnnotationId, EntitySelector, GeometryAnnotations, MaterialAssignment,
+    Parameter, ParameterAssignment, ParameterId, ParameterValue, ResolvedAnnotations,
+    ResolvedMaterialAssignment, ResolvedParameterAssignment,
+};
 pub use fem::poisson::{PoissonProblem, PoissonResult, solve_poisson};
 pub use io::{
     FileIoError,

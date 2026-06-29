@@ -12,6 +12,7 @@ The implementation uses first-order triangular elements (`Tri3`) over a 2D mesh.
 
 - 2D points and triangular connectivity through `Mesh`, `Point2`, and `Tri3`.
 - Dimension-aware mesh core primitives through `PointD`, `Point3`, `Cell`, `ElementKind`, `Region`, and `MeshTopology`.
+- Geometry annotation primitives through `EntitySelector`, `GeometryAnnotations`, `MaterialAssignment`, and `ParameterAssignment`.
 - Constant positive scalar conductivity `k`.
 - Source term callback `f(x, y)` evaluated at each triangle centroid.
 - Dirichlet boundary conditions specified as `(node_id, value)` pairs.
@@ -66,6 +67,34 @@ Underneath that compatibility layer, the mesh module now exposes platform-orient
 - `MeshTopology<D>` for validating dimension-aware points, cells, and region assignments.
 
 `Mesh::topology()` converts the current 2D triangle mesh into `MeshTopology<2>`. This keeps existing solver behavior stable while preparing future region-targeted loads, CAD imports, and 3D elements.
+
+## Geometry Annotations
+
+The annotation layer lets callers target existing mesh regions by ID or by name:
+
+```rust
+let annotations = GeometryAnnotations::new()
+    .with_material(MaterialAssignment::new(
+        0,
+        "steel",
+        EntitySelector::region_name("body"),
+        vec![
+            Parameter::scalar("young_modulus", 210.0e9, Some("Pa")),
+            Parameter::scalar("poisson_ratio", 0.3, None::<String>),
+        ],
+    ))
+    .with_parameter(ParameterAssignment::new(
+        1,
+        "mesh_size",
+        EntitySelector::region_id(10),
+        ParameterValue::Scalar(0.05),
+        Some("m"),
+    ));
+
+let resolved = annotations.validate_for_topology(&topology)?;
+```
+
+This is a platform foundation for applying future loads, constraints, material models, and solver parameters to named geometry or mesh entities. The current Poisson solver still uses its existing node-based Dirichlet and scalar conductivity API; annotations are validated and resolved separately for now.
 
 ## Mesh Requirements
 
