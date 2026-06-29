@@ -4,7 +4,9 @@ use sprs::{CsMat, TriMat};
 use thiserror::Error;
 
 use crate::{
-    linalg::{LinalgError, SolverOptions, conjugate_gradient},
+    linalg::{
+        LinalgError, LinearSolverOptions, SolverDiagnostics, SolverOptions, solve_linear_system,
+    },
     mesh::{ElementKind, Mesh, MeshTopology, NodeId, Point2, Point3, Tri3},
 };
 
@@ -25,6 +27,22 @@ pub struct PoissonResult {
     pub values: Vec<f64>,
     pub iterations: usize,
     pub residual_norm: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PoissonSolverResult {
+    pub values: Vec<f64>,
+    pub diagnostics: SolverDiagnostics,
+}
+
+impl From<PoissonSolverResult> for PoissonResult {
+    fn from(value: PoissonSolverResult) -> Self {
+        Self {
+            values: value.values,
+            iterations: value.diagnostics.iterations,
+            residual_norm: value.diagnostics.residual_norm,
+        }
+    }
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -56,13 +74,24 @@ pub fn solve_poisson<F>(
 where
     F: Fn(f64, f64) -> f64,
 {
-    let (matrix, rhs) = assemble_poisson_system(mesh, problem)?;
-    let result = conjugate_gradient(&matrix, &rhs, options)?;
+    solve_poisson_with_solver(mesh, problem, LinearSolverOptions::from(options))
+        .map(PoissonResult::from)
+}
 
-    Ok(PoissonResult {
+pub fn solve_poisson_with_solver<F>(
+    mesh: &Mesh,
+    problem: &PoissonProblem<F>,
+    options: LinearSolverOptions,
+) -> Result<PoissonSolverResult, PoissonError>
+where
+    F: Fn(f64, f64) -> f64,
+{
+    let (matrix, rhs) = assemble_poisson_system(mesh, problem)?;
+    let result = solve_linear_system(&matrix, &rhs, options)?;
+
+    Ok(PoissonSolverResult {
         values: result.values,
-        iterations: result.iterations,
-        residual_norm: result.residual_norm,
+        diagnostics: result.diagnostics,
     })
 }
 
@@ -74,13 +103,24 @@ pub fn solve_poisson_3d<F>(
 where
     F: Fn(f64, f64, f64) -> f64,
 {
-    let (matrix, rhs) = assemble_poisson_3d_system(mesh, problem)?;
-    let result = conjugate_gradient(&matrix, &rhs, options)?;
+    solve_poisson_3d_with_solver(mesh, problem, LinearSolverOptions::from(options))
+        .map(PoissonResult::from)
+}
 
-    Ok(PoissonResult {
+pub fn solve_poisson_3d_with_solver<F>(
+    mesh: &MeshTopology<3>,
+    problem: &PoissonProblem3D<F>,
+    options: LinearSolverOptions,
+) -> Result<PoissonSolverResult, PoissonError>
+where
+    F: Fn(f64, f64, f64) -> f64,
+{
+    let (matrix, rhs) = assemble_poisson_3d_system(mesh, problem)?;
+    let result = solve_linear_system(&matrix, &rhs, options)?;
+
+    Ok(PoissonSolverResult {
         values: result.values,
-        iterations: result.iterations,
-        residual_norm: result.residual_norm,
+        diagnostics: result.diagnostics,
     })
 }
 

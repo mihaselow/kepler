@@ -16,28 +16,34 @@ pub use condition::{
 };
 pub use fem::diffusion_reaction::{
     DiffusionReactionError, DiffusionReactionProblem, DiffusionReactionProblem3D,
-    DiffusionReactionResult, solve_diffusion_reaction, solve_diffusion_reaction_3d,
+    DiffusionReactionResult, DiffusionReactionSolverResult, solve_diffusion_reaction,
+    solve_diffusion_reaction_3d, solve_diffusion_reaction_3d_with_solver,
+    solve_diffusion_reaction_with_solver,
 };
 pub use fem::elasticity::{
     DisplacementComponent, DisplacementComponent3D, DisplacementConstraint,
     DisplacementConstraint3D, ElasticityError, ElasticityMaterial, ElasticityMaterial3D,
     ElasticityModel, ElasticityProblem, ElasticityProblem3D, ElasticityResult, ElasticityResult3D,
-    NodalForce, NodalForce3D, solve_elasticity, solve_elasticity_3d,
+    ElasticitySolverResult, ElasticitySolverResult3D, NodalForce, NodalForce3D, solve_elasticity,
+    solve_elasticity_3d, solve_elasticity_3d_with_solver, solve_elasticity_with_solver,
 };
 pub use fem::electrostatics::{
-    ElectricPotentialResult, ElectrostaticProblem, ElectrostaticProblem3D, solve_electrostatics,
-    solve_electrostatics_3d,
+    ElectricPotentialResult, ElectricPotentialSolverResult, ElectrostaticProblem,
+    ElectrostaticProblem3D, solve_electrostatics, solve_electrostatics_3d,
+    solve_electrostatics_3d_with_solver, solve_electrostatics_with_solver,
 };
 pub use fem::heat::{
-    SteadyHeatProblem, SteadyHeatProblem3D, TemperatureResult, solve_steady_heat,
-    solve_steady_heat_3d,
+    SteadyHeatProblem, SteadyHeatProblem3D, TemperatureResult, TemperatureSolverResult,
+    solve_steady_heat, solve_steady_heat_3d, solve_steady_heat_3d_with_solver,
+    solve_steady_heat_with_solver,
 };
 pub use fem::modal::{
     ModalError, ModalProblem, ModalProblem3D, ModalResult, ModalResult3D, ModeShape, ModeShape3D,
     solve_modal, solve_modal_3d,
 };
 pub use fem::poisson::{
-    PoissonProblem, PoissonProblem3D, PoissonResult, solve_poisson, solve_poisson_3d,
+    PoissonProblem, PoissonProblem3D, PoissonResult, PoissonSolverResult, solve_poisson,
+    solve_poisson_3d, solve_poisson_3d_with_solver, solve_poisson_with_solver,
 };
 pub use io::{
     FileIoError,
@@ -47,7 +53,12 @@ pub use io::{
     solution::{format_solution, write_solution_file},
     vtk::{VtkScalarField, format_vtk_legacy, write_vtk_legacy_file},
 };
-pub use linalg::SolverOptions;
+pub use linalg::{
+    ConfiguredLinearSolver, LinalgError, LinearSolver, LinearSolverBackend, LinearSolverOptions,
+    NonlinearSolverDiagnostics, NonlinearSolverOptions, NonlinearSolverResult, NonlinearSystem,
+    PreconditionerKind, SolverDiagnostics, SolverOptions, TransientSolverOptions,
+    TransientStepResult, newton_solve, solve_linear_system, solve_linear_transient,
+};
 pub use mesh::{
     Cell, CellId, ElementKind, EntityDimension, FacetId, FieldId, MaterialId, Mesh, MeshError,
     MeshTopology, NodeId, Point2, Point3, PointD, Region, RegionId, Tri3,

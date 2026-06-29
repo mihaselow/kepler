@@ -5,7 +5,9 @@ use thiserror::Error;
 
 use crate::{
     fem::poisson::{local_load, local_stiffness, local_tet4_load, local_tet4_stiffness},
-    linalg::{LinalgError, SolverOptions, conjugate_gradient},
+    linalg::{
+        LinalgError, LinearSolverOptions, SolverDiagnostics, SolverOptions, solve_linear_system,
+    },
     mesh::{ElementKind, Mesh, MeshTopology, NodeId, Tri3},
 };
 
@@ -28,6 +30,22 @@ pub struct DiffusionReactionResult {
     pub values: Vec<f64>,
     pub iterations: usize,
     pub residual_norm: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiffusionReactionSolverResult {
+    pub values: Vec<f64>,
+    pub diagnostics: SolverDiagnostics,
+}
+
+impl From<DiffusionReactionSolverResult> for DiffusionReactionResult {
+    fn from(value: DiffusionReactionSolverResult) -> Self {
+        Self {
+            values: value.values,
+            iterations: value.diagnostics.iterations,
+            residual_norm: value.diagnostics.residual_norm,
+        }
+    }
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -61,13 +79,24 @@ pub fn solve_diffusion_reaction<F>(
 where
     F: Fn(f64, f64) -> f64,
 {
-    let (matrix, rhs) = assemble_diffusion_reaction_system(mesh, problem)?;
-    let result = conjugate_gradient(&matrix, &rhs, options)?;
+    solve_diffusion_reaction_with_solver(mesh, problem, LinearSolverOptions::from(options))
+        .map(DiffusionReactionResult::from)
+}
 
-    Ok(DiffusionReactionResult {
+pub fn solve_diffusion_reaction_with_solver<F>(
+    mesh: &Mesh,
+    problem: &DiffusionReactionProblem<F>,
+    options: LinearSolverOptions,
+) -> Result<DiffusionReactionSolverResult, DiffusionReactionError>
+where
+    F: Fn(f64, f64) -> f64,
+{
+    let (matrix, rhs) = assemble_diffusion_reaction_system(mesh, problem)?;
+    let result = solve_linear_system(&matrix, &rhs, options)?;
+
+    Ok(DiffusionReactionSolverResult {
         values: result.values,
-        iterations: result.iterations,
-        residual_norm: result.residual_norm,
+        diagnostics: result.diagnostics,
     })
 }
 
@@ -79,13 +108,24 @@ pub fn solve_diffusion_reaction_3d<F>(
 where
     F: Fn(f64, f64, f64) -> f64,
 {
-    let (matrix, rhs) = assemble_diffusion_reaction_3d_system(mesh, problem)?;
-    let result = conjugate_gradient(&matrix, &rhs, options)?;
+    solve_diffusion_reaction_3d_with_solver(mesh, problem, LinearSolverOptions::from(options))
+        .map(DiffusionReactionResult::from)
+}
 
-    Ok(DiffusionReactionResult {
+pub fn solve_diffusion_reaction_3d_with_solver<F>(
+    mesh: &MeshTopology<3>,
+    problem: &DiffusionReactionProblem3D<F>,
+    options: LinearSolverOptions,
+) -> Result<DiffusionReactionSolverResult, DiffusionReactionError>
+where
+    F: Fn(f64, f64, f64) -> f64,
+{
+    let (matrix, rhs) = assemble_diffusion_reaction_3d_system(mesh, problem)?;
+    let result = solve_linear_system(&matrix, &rhs, options)?;
+
+    Ok(DiffusionReactionSolverResult {
         values: result.values,
-        iterations: result.iterations,
-        residual_norm: result.residual_norm,
+        diagnostics: result.diagnostics,
     })
 }
 

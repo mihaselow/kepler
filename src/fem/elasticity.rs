@@ -4,7 +4,9 @@ use sprs::{CsMat, TriMat};
 use thiserror::Error;
 
 use crate::{
-    linalg::{LinalgError, SolverOptions, conjugate_gradient},
+    linalg::{
+        LinalgError, LinearSolverOptions, SolverDiagnostics, SolverOptions, solve_linear_system,
+    },
     mesh::{ElementKind, Mesh, MeshTopology, NodeId, Point3, Tri3},
 };
 
@@ -111,10 +113,42 @@ pub struct ElasticityResult {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ElasticitySolverResult {
+    pub displacements: Vec<[f64; 2]>,
+    pub diagnostics: SolverDiagnostics,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ElasticityResult3D {
     pub displacements: Vec<[f64; 3]>,
     pub iterations: usize,
     pub residual_norm: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ElasticitySolverResult3D {
+    pub displacements: Vec<[f64; 3]>,
+    pub diagnostics: SolverDiagnostics,
+}
+
+impl From<ElasticitySolverResult> for ElasticityResult {
+    fn from(value: ElasticitySolverResult) -> Self {
+        Self {
+            displacements: value.displacements,
+            iterations: value.diagnostics.iterations,
+            residual_norm: value.diagnostics.residual_norm,
+        }
+    }
+}
+
+impl From<ElasticitySolverResult3D> for ElasticityResult3D {
+    fn from(value: ElasticitySolverResult3D) -> Self {
+        Self {
+            displacements: value.displacements,
+            iterations: value.diagnostics.iterations,
+            residual_norm: value.diagnostics.residual_norm,
+        }
+    }
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -155,18 +189,26 @@ pub fn solve_elasticity(
     problem: &ElasticityProblem,
     options: SolverOptions,
 ) -> Result<ElasticityResult, ElasticityError> {
+    solve_elasticity_with_solver(mesh, problem, LinearSolverOptions::from(options))
+        .map(ElasticityResult::from)
+}
+
+pub fn solve_elasticity_with_solver(
+    mesh: &Mesh,
+    problem: &ElasticityProblem,
+    options: LinearSolverOptions,
+) -> Result<ElasticitySolverResult, ElasticityError> {
     let (matrix, rhs) = assemble_elasticity_system(mesh, problem)?;
-    let result = conjugate_gradient(&matrix, &rhs, options)?;
+    let result = solve_linear_system(&matrix, &rhs, options)?;
     let displacements = result
         .values
         .chunks_exact(2)
         .map(|values| [values[0], values[1]])
         .collect();
 
-    Ok(ElasticityResult {
+    Ok(ElasticitySolverResult {
         displacements,
-        iterations: result.iterations,
-        residual_norm: result.residual_norm,
+        diagnostics: result.diagnostics,
     })
 }
 
@@ -175,18 +217,26 @@ pub fn solve_elasticity_3d(
     problem: &ElasticityProblem3D,
     options: SolverOptions,
 ) -> Result<ElasticityResult3D, ElasticityError> {
+    solve_elasticity_3d_with_solver(mesh, problem, LinearSolverOptions::from(options))
+        .map(ElasticityResult3D::from)
+}
+
+pub fn solve_elasticity_3d_with_solver(
+    mesh: &MeshTopology<3>,
+    problem: &ElasticityProblem3D,
+    options: LinearSolverOptions,
+) -> Result<ElasticitySolverResult3D, ElasticityError> {
     let (matrix, rhs) = assemble_elasticity_3d_system(mesh, problem)?;
-    let result = conjugate_gradient(&matrix, &rhs, options)?;
+    let result = solve_linear_system(&matrix, &rhs, options)?;
     let displacements = result
         .values
         .chunks_exact(3)
         .map(|values| [values[0], values[1], values[2]])
         .collect();
 
-    Ok(ElasticityResult3D {
+    Ok(ElasticitySolverResult3D {
         displacements,
-        iterations: result.iterations,
-        residual_norm: result.residual_norm,
+        diagnostics: result.diagnostics,
     })
 }
 

@@ -18,7 +18,7 @@ The implementation supports first-order triangular elements (`Tri3`) over a 2D m
 - Source term callbacks evaluated at each element centroid.
 - Dirichlet boundary conditions specified as `(node_id, value)` pairs.
 - Sparse global stiffness assembly using `sprs`.
-- Conjugate Gradient solve for symmetric positive definite systems.
+- Conjugate Gradient solve for symmetric positive definite systems, plus a richer linalg solver stack for backend selection and diagnostics.
 - Solver diagnostics with iteration count and residual norm.
 - File-driven solves from `.mesh` and `.params` inputs.
 - `.solution` output with nodal values and diagnostics.
@@ -32,7 +32,7 @@ The implementation supports first-order triangular elements (`Tri3`) over a 2D m
 - Electrostatics API wrappers over the scalar Poisson solver for 2D `Tri3` and 3D `Tet4` problems.
 - Structural modal analysis for constrained 2D `Tri3` and 3D `Tet4` elasticity models with lumped mass.
 
-The solver does not yet support assembled Neumann boundaries, spatially varying conductivity, preconditioning, `Quad4`/`Hex8` assembly, or higher-order elements. The file-driven CLI and REST endpoint still expose the original 2D `Tri3` Poisson solve path.
+The solver does not yet support assembled Neumann boundaries, spatially varying conductivity, `Quad4`/`Hex8` assembly, or higher-order elements. The file-driven CLI and REST endpoint still expose the original 2D `Tri3` Poisson solve path.
 
 ## Public API
 
