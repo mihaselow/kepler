@@ -69,7 +69,7 @@ Request:
 }
 ```
 
-`solver_options` is optional. Missing iteration and tolerance fields fall back to `SolverOptions::default()`. Supported `backend` values are `conjugate_gradient`, `cg`, and `dense_direct`. Supported `preconditioner` values are `none` and `jacobi`.
+`solver_options` is optional. Missing iteration and tolerance fields fall back to `SolverOptions::default()`. Supported `backend` values are `conjugate_gradient`, `cg`, `gmres`, and `dense_direct`. Supported `preconditioner` values are `none` and `jacobi`.
 
 Response:
 

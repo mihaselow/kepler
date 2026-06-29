@@ -21,6 +21,7 @@ let result = solve_linear_system(
 Supported linear backends:
 
 - `LinearSolverBackend::ConjugateGradient`: iterative SPD solve.
+- `LinearSolverBackend::Gmres`: iterative nonsymmetric solve using full GMRES.
 - `LinearSolverBackend::DenseDirect`: dense Gaussian-elimination hook for small systems and tests.
 
 Supported preconditioners:
@@ -93,7 +94,7 @@ The `/solve/poisson` REST endpoint accepts the same concepts in `solver_options`
   "solver_options": {
     "max_iterations": 10000,
     "tolerance": 1e-10,
-    "backend": "dense_direct",
+    "backend": "gmres",
     "preconditioner": "none",
     "record_residual_history": true
   }

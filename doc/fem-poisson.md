@@ -485,7 +485,7 @@ Supported file-driven solver settings are:
 
 - `solver max_iterations <usize>`
 - `solver tolerance <positive-f64>`
-- `solver backend conjugate_gradient|cg|dense_direct`
+- `solver backend conjugate_gradient|cg|gmres|dense_direct`
 - `solver preconditioner none|jacobi`
 - `solver record_residual_history true|false`
 

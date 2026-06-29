@@ -189,6 +189,7 @@ fn parse_dirichlet_line(line: usize, tokens: &[&str]) -> Result<(NodeId, f64), F
 fn parse_backend(line: usize, value: &str) -> Result<LinearSolverBackend, FileIoError> {
     match value {
         "cg" | "conjugate_gradient" => Ok(LinearSolverBackend::ConjugateGradient),
+        "gmres" => Ok(LinearSolverBackend::Gmres),
         "dense_direct" => Ok(LinearSolverBackend::DenseDirect),
         _ => Err(FileIoError::UnsupportedSolverBackend {
             line,

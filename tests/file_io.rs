@@ -80,7 +80,7 @@ conductivity 1.0
 source constant 1.0
 solver max_iterations 25
 solver tolerance 1e-8
-solver backend dense_direct
+solver backend gmres
 solver preconditioner jacobi
 solver record_residual_history true
 
@@ -92,10 +92,7 @@ dirichlet
 
     assert_eq!(config.solver_options.max_iterations, 25);
     assert_close(config.solver_options.tolerance, 1.0e-8);
-    assert_eq!(
-        config.solver_options.backend,
-        LinearSolverBackend::DenseDirect
-    );
+    assert_eq!(config.solver_options.backend, LinearSolverBackend::Gmres);
     assert_eq!(
         config.solver_options.preconditioner,
         PreconditionerKind::Jacobi

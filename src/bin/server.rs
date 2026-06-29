@@ -199,6 +199,7 @@ impl TryFrom<SolverOptionsRequest> for LinearSolverOptions {
                 None | Some("cg") | Some("conjugate_gradient") => {
                     LinearSolverBackend::ConjugateGradient
                 }
+                Some("gmres") => LinearSolverBackend::Gmres,
                 Some("dense_direct") => LinearSolverBackend::DenseDirect,
                 Some(value) => return Err(format!("unsupported solver backend '{value}'")),
             },
@@ -234,6 +235,7 @@ impl From<SolverDiagnostics> for DiagnosticsResponse {
         Self {
             backend: match value.backend {
                 LinearSolverBackend::ConjugateGradient => "conjugate_gradient",
+                LinearSolverBackend::Gmres => "gmres",
                 LinearSolverBackend::DenseDirect => "dense_direct",
             },
             preconditioner: match value.preconditioner {
@@ -352,7 +354,7 @@ mod tests {
     #[tokio::test]
     async fn solve_endpoint_accepts_solver_stack_options() {
         let mut request = square_request();
-        request["solver_options"]["backend"] = json!("dense_direct");
+        request["solver_options"]["backend"] = json!("gmres");
         request["solver_options"]["preconditioner"] = json!("none");
         request["solver_options"]["record_residual_history"] = json!(true);
 
@@ -370,7 +372,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         let body = body_json(response).await;
-        assert_eq!(body["diagnostics"]["backend"], json!("dense_direct"));
+        assert_eq!(body["diagnostics"]["backend"], json!("gmres"));
         assert_eq!(body["diagnostics"]["preconditioner"], json!("none"));
         assert_eq!(
             body["diagnostics"]["residual_history"]

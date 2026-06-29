@@ -51,6 +51,55 @@ fn linear_solver_uses_jacobi_preconditioned_cg_with_diagnostics() {
 }
 
 #[test]
+fn gmres_solves_nonsymmetric_system_with_diagnostics() {
+    let matrix = csr_matrix(2, &[(0, 0, 3.0), (0, 1, 1.0), (1, 1, 2.0)]);
+    let rhs = [7.0, 4.0];
+
+    let result = solve_linear_system(
+        &matrix,
+        &rhs,
+        LinearSolverOptions {
+            backend: LinearSolverBackend::Gmres,
+            record_residual_history: true,
+            ..LinearSolverOptions::default()
+        },
+    )
+    .unwrap();
+
+    assert_close(result.values[0], 5.0 / 3.0);
+    assert_close(result.values[1], 2.0);
+    assert_eq!(result.diagnostics.backend, LinearSolverBackend::Gmres);
+    assert!(result.diagnostics.converged);
+    assert!(!result.diagnostics.residual_history.is_empty());
+}
+
+#[test]
+fn gmres_reports_non_convergence() {
+    let matrix = csr_matrix(2, &[(0, 0, 2.0), (0, 1, 1.0), (1, 0, 1.0), (1, 1, 3.0)]);
+    let rhs = [1.0, 2.0];
+
+    let error = solve_linear_system(
+        &matrix,
+        &rhs,
+        LinearSolverOptions {
+            backend: LinearSolverBackend::Gmres,
+            max_iterations: 1,
+            tolerance: 1.0e-14,
+            ..LinearSolverOptions::default()
+        },
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        LinalgError::NonConverged {
+            iterations: 1,
+            residual_norm,
+        } if residual_norm > 0.0
+    ));
+}
+
+#[test]
 fn jacobi_preconditioner_rejects_missing_diagonal() {
     let matrix = csr_matrix(2, &[(0, 0, 1.0), (0, 1, 1.0), (1, 0, 1.0)]);
     let rhs = [1.0, 2.0];

@@ -19,6 +19,7 @@ impl Default for SolverOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinearSolverBackend {
     ConjugateGradient,
+    Gmres,
     DenseDirect,
 }
 
@@ -177,6 +178,8 @@ pub enum LinalgError {
     DimensionMismatch { matrix_dim: usize, rhs_len: usize },
     #[error("CG broke down because the search direction is orthogonal to A*p")]
     Breakdown,
+    #[error("GMRES broke down at Arnoldi step {iteration}")]
+    GmresBreakdown { iteration: usize },
     #[error("CG did not converge after {iterations} iterations; residual norm is {residual_norm}")]
     NonConverged {
         iterations: usize,
@@ -234,6 +237,7 @@ pub fn solve_linear_system(
         LinearSolverBackend::ConjugateGradient => {
             conjugate_gradient_with_options(matrix, rhs, options)
         }
+        LinearSolverBackend::Gmres => gmres_with_options(matrix, rhs, options),
         LinearSolverBackend::DenseDirect => dense_direct_solve(matrix, rhs, options),
     }
 }
@@ -451,6 +455,121 @@ fn dense_direct_solve(
     })
 }
 
+fn gmres_with_options(
+    matrix: &CsMat<f64>,
+    rhs: &[f64],
+    options: LinearSolverOptions,
+) -> Result<LinearSolverResult, LinalgError> {
+    let initial_residual = norm(rhs);
+    let mut residual_history = if options.record_residual_history {
+        vec![initial_residual]
+    } else {
+        Vec::new()
+    };
+
+    if initial_residual <= options.tolerance {
+        return Ok(LinearSolverResult {
+            values: vec![0.0; rhs.len()],
+            diagnostics: SolverDiagnostics {
+                backend: LinearSolverBackend::Gmres,
+                preconditioner: options.preconditioner,
+                converged: true,
+                iterations: 0,
+                initial_residual_norm: initial_residual,
+                residual_norm: initial_residual,
+                residual_history,
+            },
+        });
+    }
+
+    let preconditioner = build_preconditioner(matrix, options.preconditioner)?;
+    let max_iterations = options.max_iterations.min(rhs.len());
+    let mut basis = vec![apply_preconditioner(&preconditioner, rhs)];
+    normalize(&mut basis[0]);
+    let mut hessenberg = vec![vec![0.0; max_iterations]; max_iterations + 1];
+    let mut best_values = vec![0.0; rhs.len()];
+    let mut best_residual = initial_residual;
+
+    for iteration in 0..max_iterations {
+        let mut arnoldi_vector =
+            apply_preconditioner(&preconditioner, &mul_csr_vec(matrix, &basis[iteration]));
+
+        for column in 0..=iteration {
+            hessenberg[column][iteration] = dot(&arnoldi_vector, &basis[column]);
+            axpy(
+                -hessenberg[column][iteration],
+                &basis[column],
+                &mut arnoldi_vector,
+            );
+        }
+
+        hessenberg[iteration + 1][iteration] = norm(&arnoldi_vector);
+        let broke_down = hessenberg[iteration + 1][iteration] <= f64::EPSILON;
+        if !broke_down && iteration + 1 < max_iterations {
+            let mut next_basis = arnoldi_vector;
+            scale(1.0 / hessenberg[iteration + 1][iteration], &mut next_basis);
+            basis.push(next_basis);
+        }
+
+        let coefficients = solve_gmres_least_squares(&hessenberg, initial_residual, iteration + 1)?;
+        let mut values = vec![0.0; rhs.len()];
+        for (coefficient, basis_vector) in coefficients.iter().zip(&basis) {
+            axpy(*coefficient, basis_vector, &mut values);
+        }
+
+        let residual = residual_norm(matrix, &values, rhs);
+        best_residual = residual;
+        best_values = values;
+        if options.record_residual_history {
+            residual_history.push(residual);
+        }
+        if residual <= options.tolerance {
+            return Ok(LinearSolverResult {
+                values: best_values,
+                diagnostics: SolverDiagnostics {
+                    backend: LinearSolverBackend::Gmres,
+                    preconditioner: options.preconditioner,
+                    converged: true,
+                    iterations: iteration + 1,
+                    initial_residual_norm: initial_residual,
+                    residual_norm: residual,
+                    residual_history,
+                },
+            });
+        }
+        if broke_down {
+            return Err(LinalgError::GmresBreakdown {
+                iteration: iteration + 1,
+            });
+        }
+    }
+
+    Err(LinalgError::NonConverged {
+        iterations: max_iterations,
+        residual_norm: best_residual,
+    })
+}
+
+fn solve_gmres_least_squares(
+    hessenberg: &[Vec<f64>],
+    beta: f64,
+    iteration_count: usize,
+) -> Result<Vec<f64>, LinalgError> {
+    let mut normal_matrix = vec![vec![0.0; iteration_count]; iteration_count];
+    let mut normal_rhs = vec![0.0; iteration_count];
+
+    for (row, hessenberg_row) in hessenberg.iter().enumerate().take(iteration_count + 1) {
+        for col in 0..iteration_count {
+            normal_rhs[col] += hessenberg_row[col] * if row == 0 { beta } else { 0.0 };
+            for inner_col in 0..iteration_count {
+                normal_matrix[col][inner_col] += hessenberg_row[col] * hessenberg_row[inner_col];
+            }
+        }
+    }
+
+    gaussian_elimination(normal_matrix, &normal_rhs)
+}
+
 fn gaussian_elimination(mut matrix: Vec<Vec<f64>>, rhs: &[f64]) -> Result<Vec<f64>, LinalgError> {
     let n = rhs.len();
     let mut values = rhs.to_vec();
@@ -635,4 +754,17 @@ fn dot(a: &[f64], b: &[f64]) -> f64 {
 
 fn norm(values: &[f64]) -> f64 {
     dot(values, values).sqrt()
+}
+
+fn normalize(values: &mut [f64]) {
+    let vector_norm = norm(values);
+    if vector_norm > 0.0 {
+        scale(1.0 / vector_norm, values);
+    }
+}
+
+fn scale(alpha: f64, values: &mut [f64]) {
+    for value in values {
+        *value *= alpha;
+    }
 }
