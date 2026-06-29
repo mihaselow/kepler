@@ -275,6 +275,14 @@ let result = solve_diffusion_reaction_3d(&topology, &problem, SolverOptions::def
 
 Diffusion-reaction uses the existing scalar stiffness and load assembly plus a consistent reaction matrix. The reaction rate must be finite and non-negative. The module currently supports constant coefficients and nodal Dirichlet constraints; it does not yet consume `ConditionSet` or region-targeted material fields.
 
+Transient diffusion-reaction solves the first-order system:
+
+```text
+S du/dt + (K + R) u = f(t)
+```
+
+`solve_transient_diffusion_reaction` supports 2D `Tri3` meshes and `solve_transient_diffusion_reaction_3d` supports 3D `Tet4` meshes. Both use a lumped storage matrix, the solver-stack theta integrator, time-dependent source callbacks, and constant nodal Dirichlet values reduced out of the active solve.
+
 ## Electrostatics
 
 The electrostatics module solves the scalar potential equation:

@@ -1,10 +1,13 @@
 use kepler::{
-    Cell, DiffusionReactionProblem, DiffusionReactionProblem3D, ElementKind, Mesh, MeshTopology,
-    Point2, PointD, SolverOptions, Tri3,
+    Cell, DiffusionReactionProblem, DiffusionReactionProblem3D, ElementKind, LinearSolverBackend,
+    LinearSolverOptions, Mesh, MeshTopology, Point2, PointD, SolverOptions,
+    TransientDiffusionReactionProblem, TransientDiffusionReactionProblem3D, TransientSolverOptions,
+    Tri3,
     fem::diffusion_reaction::{
         assemble_diffusion_reaction_system, local_tet4_reaction, local_tri3_reaction,
     },
-    solve_diffusion_reaction, solve_diffusion_reaction_3d,
+    solve_diffusion_reaction, solve_diffusion_reaction_3d, solve_transient_diffusion_reaction,
+    solve_transient_diffusion_reaction_3d,
 };
 
 const EPS: f64 = 1.0e-12;
@@ -84,6 +87,98 @@ fn diffusion_reaction_rejects_invalid_coefficients() {
     assert!(matches!(
         error,
         kepler::DiffusionReactionError::InvalidReactionRate(-1.0)
+    ));
+}
+
+#[test]
+fn transient_diffusion_reaction_solves_two_dimensional_decay() {
+    let mesh = unit_triangle();
+    let problem = TransientDiffusionReactionProblem {
+        diffusivity: 1.0,
+        reaction_rate: 0.0,
+        storage_coefficient: 1.0,
+        source: |_, _, _| 0.0,
+        initial_values: vec![0.0, 1.0, 0.0],
+        dirichlet: vec![(0, 0.0), (2, 0.0)],
+    };
+
+    let result = solve_transient_diffusion_reaction(
+        &mesh,
+        &problem,
+        TransientSolverOptions {
+            time_step: 1.0,
+            steps: 2,
+            theta: 1.0,
+            linear_solver: LinearSolverOptions {
+                backend: LinearSolverBackend::DenseDirect,
+                ..LinearSolverOptions::default()
+            },
+        },
+    )
+    .unwrap();
+
+    assert_eq!(result.steps.len(), 2);
+    assert_close(result.steps[0].values[0], 0.0);
+    assert_close(result.steps[0].values[1], 0.25);
+    assert_close(result.steps[0].values[2], 0.0);
+    assert_close(result.steps[1].values[1], 0.0625);
+    assert_eq!(
+        result.steps[0].diagnostics.backend,
+        LinearSolverBackend::DenseDirect
+    );
+}
+
+#[test]
+fn transient_diffusion_reaction_solves_three_dimensional_decay() {
+    let mesh = unit_tetrahedron();
+    let problem = TransientDiffusionReactionProblem3D {
+        diffusivity: 1.0,
+        reaction_rate: 0.0,
+        storage_coefficient: 1.0,
+        source: |_, _, _, _| 0.0,
+        initial_values: vec![1.0, 0.0, 0.0, 0.0],
+        dirichlet: vec![(1, 0.0), (2, 0.0), (3, 0.0)],
+    };
+
+    let result = solve_transient_diffusion_reaction_3d(
+        &mesh,
+        &problem,
+        TransientSolverOptions {
+            time_step: 1.0,
+            steps: 2,
+            theta: 1.0,
+            linear_solver: LinearSolverOptions {
+                backend: LinearSolverBackend::DenseDirect,
+                ..LinearSolverOptions::default()
+            },
+        },
+    )
+    .unwrap();
+
+    assert_close(result.steps[0].values[0], 1.0 / 13.0);
+    assert_close(result.steps[0].values[1], 0.0);
+    assert_close(result.steps[1].values[0], 1.0 / 169.0);
+}
+
+#[test]
+fn transient_diffusion_reaction_rejects_invalid_storage_coefficient() {
+    let mesh = unit_triangle();
+    let problem = TransientDiffusionReactionProblem {
+        diffusivity: 1.0,
+        reaction_rate: 0.0,
+        storage_coefficient: 0.0,
+        source: |_, _, _| 0.0,
+        initial_values: vec![0.0, 1.0, 0.0],
+        dirichlet: vec![],
+    };
+
+    let error =
+        solve_transient_diffusion_reaction(&mesh, &problem, TransientSolverOptions::default())
+            .unwrap_err();
+
+    assert!(matches!(
+        error,
+        kepler::DiffusionReactionError::InvalidStorageCoefficient(0.0)
     ));
 }
 

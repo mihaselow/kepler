@@ -16,9 +16,11 @@ pub use condition::{
 };
 pub use fem::diffusion_reaction::{
     DiffusionReactionError, DiffusionReactionProblem, DiffusionReactionProblem3D,
-    DiffusionReactionResult, DiffusionReactionSolverResult, solve_diffusion_reaction,
-    solve_diffusion_reaction_3d, solve_diffusion_reaction_3d_with_solver,
-    solve_diffusion_reaction_with_solver,
+    DiffusionReactionResult, DiffusionReactionSolverResult, TransientDiffusionReactionProblem,
+    TransientDiffusionReactionProblem3D, TransientDiffusionReactionResult,
+    TransientDiffusionReactionStep, solve_diffusion_reaction, solve_diffusion_reaction_3d,
+    solve_diffusion_reaction_3d_with_solver, solve_diffusion_reaction_with_solver,
+    solve_transient_diffusion_reaction, solve_transient_diffusion_reaction_3d,
 };
 pub use fem::elasticity::{
     DisplacementComponent, DisplacementComponent3D, DisplacementConstraint,
