@@ -165,6 +165,8 @@ The step equation is:
 
 `theta = 1.0` gives backward Euler, `theta = 0.5` gives Crank-Nicolson, and `theta = 0.0` gives forward Euler in this matrix form. Each `TransientStepResult` includes time, state values, and linear solver diagnostics.
 
+`solve_transient_heat` is the first physics-facing user of this generic transient integrator. It assembles a 2D `Tri3` heat-capacity matrix and conductivity matrix, reduces out prescribed temperature nodes, calls `solve_linear_transient`, and reconstructs full nodal temperatures for each step.
+
 ## Current Limits
 
 The direct backend is intentionally dense and intended for small systems, verification fixtures, and as a future hook point for external sparse direct solvers. Nonlinear and transient solvers are generic linalg-level primitives; they are not yet wired into the file CLI, REST API, or physics-specific problem definitions.

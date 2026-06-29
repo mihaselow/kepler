@@ -216,6 +216,31 @@ let result = solve_steady_heat_3d(&topology, &problem, SolverOptions::default())
 
 `TemperatureResult::temperatures` contains one nodal temperature per mesh node. Heat transfer currently supports constant thermal conductivity, centroid heat generation, and prescribed nodal temperatures. It does not yet assemble convection, heat flux, radiation, or region-targeted thermal conditions.
 
+The heat module also provides a 2D transient heat solve:
+
+```rust
+let problem = TransientHeatProblem {
+    thermal_conductivity: 1.0,
+    volumetric_heat_capacity: 1.0,
+    heat_generation: |x, y, time| 0.0,
+    initial_temperatures: vec![0.0, 1.0, 0.0],
+    prescribed_temperatures: vec![(0, 0.0), (2, 0.0)],
+};
+
+let result = solve_transient_heat(
+    &mesh,
+    &problem,
+    TransientSolverOptions {
+        time_step: 0.1,
+        steps: 10,
+        theta: 1.0,
+        ..TransientSolverOptions::default()
+    },
+)?;
+```
+
+Transient heat uses a lumped heat-capacity matrix, the solver-stack theta integrator, and constant prescribed temperatures reduced out of the active solve. It currently supports 2D `Tri3` meshes only.
+
 ## Diffusion-Reaction
 
 The diffusion-reaction module solves:

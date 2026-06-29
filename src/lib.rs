@@ -34,8 +34,9 @@ pub use fem::electrostatics::{
 };
 pub use fem::heat::{
     SteadyHeatProblem, SteadyHeatProblem3D, TemperatureResult, TemperatureSolverResult,
+    TransientHeatError, TransientHeatProblem, TransientTemperatureResult, TransientTemperatureStep,
     solve_steady_heat, solve_steady_heat_3d, solve_steady_heat_3d_with_solver,
-    solve_steady_heat_with_solver,
+    solve_steady_heat_with_solver, solve_transient_heat,
 };
 pub use fem::modal::{
     ModalError, ModalProblem, ModalProblem3D, ModalResult, ModalResult3D, ModeShape, ModeShape3D,
