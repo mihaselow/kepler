@@ -1,4 +1,4 @@
-# Minimal FEM Solver
+# FEM Solver
 
 Kepler currently includes a minimal finite element solver for the scalar Poisson equation, suitable as the first bare solver foundation for steady heat diffusion or similar scalar field problems.
 
@@ -26,8 +26,9 @@ The implementation supports first-order triangular elements (`Tri3`) over a 2D m
 - Gmsh ASCII 2.x mesh import into `MeshTopology`.
 - Legacy VTK unstructured-grid export for topology and point scalar fields.
 - REST solves through the separate `server` binary.
+- 2D linear elasticity on `Tri3` meshes with displacement constraints and nodal forces.
 
-The solver does not yet support assembled Neumann boundaries, spatially varying conductivity, preconditioning, `Quad4`/`Hex8` assembly, or higher-order elements. The file-driven CLI and REST endpoint still expose the original 2D `Tri3` solve path.
+The solver does not yet support assembled Neumann boundaries, spatially varying conductivity, preconditioning, `Quad4`/`Hex8` assembly, higher-order elements, or 3D elasticity. The file-driven CLI and REST endpoint still expose the original 2D `Tri3` Poisson solve path.
 
 ## Public API
 
@@ -65,6 +66,50 @@ let result = solve_poisson_3d(&topology, &problem, SolverOptions::default())?;
 ```
 
 `solve_poisson_3d` assembles `Tet4` cells and ignores lower-dimensional boundary cells currently stored in the topology. `Hex8` cells are validated by the mesh core but are not assembled by Poisson yet.
+
+## Linear Elasticity
+
+The elasticity module provides an initial 2D small-strain linear elasticity solver for `Tri3` meshes:
+
+```rust
+let problem = ElasticityProblem {
+    material: ElasticityMaterial {
+        young_modulus: 210.0e9,
+        poisson_ratio: 0.3,
+        model: ElasticityModel::PlaneStress,
+    },
+    thickness: 1.0,
+    constraints: vec![
+        DisplacementConstraint {
+            node: 0,
+            component: DisplacementComponent::X,
+            value: 0.0,
+        },
+        DisplacementConstraint {
+            node: 0,
+            component: DisplacementComponent::Y,
+            value: 0.0,
+        },
+    ],
+    forces: vec![NodalForce {
+        node: 1,
+        fx: 100.0,
+        fy: 0.0,
+    }],
+};
+let result = solve_elasticity(&mesh, &problem, SolverOptions::default())?;
+```
+
+Current elasticity support includes:
+
+- Constant material over the mesh.
+- Plane stress and plane strain constitutive models.
+- Constant element thickness.
+- Nodal forces.
+- Per-node `X` and `Y` displacement constraints.
+- Constant-strain triangle stiffness assembly.
+
+The elasticity module does not yet consume `ConditionSet`, region-targeted loads, body forces, traction/pressure conditions, 3D `Tet4` elasticity, or result export helpers for stress/strain recovery.
 
 ## Mesh Core
 

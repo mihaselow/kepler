@@ -14,6 +14,10 @@ pub use condition::{
     Condition, ConditionError, ConditionId, ConditionKind, ConditionSet, ConditionSignature,
     ResolvedCondition, ResolvedConditionSet,
 };
+pub use fem::elasticity::{
+    DisplacementComponent, DisplacementConstraint, ElasticityError, ElasticityMaterial,
+    ElasticityModel, ElasticityProblem, ElasticityResult, NodalForce, solve_elasticity,
+};
 pub use fem::poisson::{
     PoissonProblem, PoissonProblem3D, PoissonResult, solve_poisson, solve_poisson_3d,
 };
