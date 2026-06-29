@@ -1,0 +1,10 @@
+conductivity 1.0
+source constant 1.0
+solver max_iterations 10000
+solver tolerance 1e-10
+
+dirichlet
+0 0.0
+1 0.0
+2 0.0
+3 0.0

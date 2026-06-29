@@ -17,8 +17,10 @@ The implementation uses first-order triangular elements (`Tri3`) over a 2D mesh.
 - Sparse global stiffness assembly using `sprs`.
 - Conjugate Gradient solve for symmetric positive definite systems.
 - Solver diagnostics with iteration count and residual norm.
+- File-driven solves from `.mesh` and `.params` inputs.
+- `.solution` output with nodal values and diagnostics.
 
-The solver does not yet support Neumann boundaries, spatially varying conductivity, mesh file loading, preconditioning, or higher-order elements.
+The solver does not yet support Neumann boundaries, spatially varying conductivity, preconditioning, or higher-order elements.
 
 ## Public API
 
@@ -99,6 +101,76 @@ The example creates a unit square with a center node, applies zero boundary valu
 ```text
 u[4] = 0.083333
 ```
+
+## File Input And Output
+
+The binary can solve from disk files:
+
+```shell
+cargo run -- solve --mesh examples/data/square.mesh --params examples/data/square.params --output square.solution
+```
+
+### Mesh Files
+
+Mesh files use the `.mesh` extension by convention and contain `nodes` and `triangles` sections:
+
+```text
+nodes
+0 0.0 0.0
+1 1.0 0.0
+2 1.0 1.0
+3 0.0 1.0
+4 0.5 0.5
+
+triangles
+0 0 1 4
+1 1 2 4
+2 2 3 4
+3 3 0 4
+```
+
+Node and triangle IDs must be contiguous and start at `0`. Triangle rows use the form `<triangle_id> <node_a> <node_b> <node_c>`.
+
+### Parameter Files
+
+Parameter files use the `.params` extension by convention:
+
+```text
+conductivity 1.0
+source constant 1.0
+solver max_iterations 10000
+solver tolerance 1e-10
+
+dirichlet
+0 0.0
+1 0.0
+2 0.0
+3 0.0
+```
+
+The first file-driven implementation supports only constant source terms:
+
+```text
+source constant <value>
+```
+
+### Solution Files
+
+Solution files use the `.solution` extension by convention:
+
+```text
+# kepler solution
+# iterations 1
+# residual_norm 0
+node value
+0 0
+1 0
+2 0
+3 0
+4 0.08333333333333333
+```
+
+Each data row contains `<node_id> <value>` in node order.
 
 ## Verification
 
