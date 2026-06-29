@@ -22,6 +22,8 @@ The implementation uses first-order triangular elements (`Tri3`) over a 2D mesh.
 - Solver diagnostics with iteration count and residual norm.
 - File-driven solves from `.mesh` and `.params` inputs.
 - `.solution` output with nodal values and diagnostics.
+- Gmsh ASCII 2.x mesh import into `MeshTopology`.
+- Legacy VTK unstructured-grid export for topology and point scalar fields.
 - REST solves through the separate `server` binary.
 
 The solver does not yet support Neumann boundaries, spatially varying conductivity, preconditioning, or higher-order elements. The platform mesh core now has early 3D/topology primitives, but the Poisson solver itself still solves 2D `Tri3` meshes only.
@@ -263,6 +265,38 @@ node value
 ```
 
 Each data row contains `<node_id> <value>` in node order.
+
+### Gmsh Import
+
+The I/O layer can import Gmsh ASCII 2.x `.msh` files:
+
+```rust
+let imported = parse_gmsh_str(input)?;
+```
+
+The importer currently supports:
+
+- Gmsh ASCII 2.x format only.
+- `Line2`, `Tri3`, `Quad4`, `Tet4`, and `Hex8` element types.
+- `$PhysicalNames` preservation as `Region` values.
+- Physical entity tags on elements mapped to internal region IDs.
+- Automatic 2D import when all node `z` coordinates are approximately zero and no volume elements are present.
+- 3D import when volume elements or nonzero `z` coordinates are present.
+
+The return type is `ImportedMesh`, with `TwoD(MeshTopology<2>)` and `ThreeD(MeshTopology<3>)` variants. This importer is a platform feature; the current Poisson solve path still consumes the original 2D `Mesh` type.
+
+### VTK Export
+
+The I/O layer can write legacy VTK unstructured grids:
+
+```rust
+let output = format_vtk_legacy(
+    &topology,
+    &[VtkScalarField::new("temperature", values)],
+)?;
+```
+
+VTK export currently supports topology points/cells and optional point scalar fields. It writes cell types for `Line2`, `Tri3`, `Quad4`, `Tet4`, and `Hex8`. Scalar fields must contain one value per topology point.
 
 ## Verification
 

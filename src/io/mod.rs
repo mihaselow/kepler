@@ -1,6 +1,8 @@
+pub mod gmsh;
 pub mod mesh;
 pub mod params;
 pub mod solution;
+pub mod vtk;
 
 use std::{io, num::ParseFloatError, num::ParseIntError, path::PathBuf};
 
@@ -66,6 +68,22 @@ pub enum FileIoError {
     InvalidMaxIterations,
     #[error("solver tolerance must be positive and finite, got {value}")]
     InvalidTolerance { value: f64 },
+    #[error("unsupported Gmsh format '{version}'; only ASCII 2.x files are supported")]
+    UnsupportedGmshFormat { version: String },
+    #[error("line {line}: unsupported Gmsh element type {element_type}")]
+    UnsupportedGmshElement { line: usize, element_type: usize },
+    #[error("line {line}: Gmsh element references node id {node_id}, but no such node exists")]
+    UnknownGmshNode { line: usize, node_id: usize },
+    #[error("Gmsh file must contain a $Nodes section")]
+    MissingGmshNodes,
+    #[error("Gmsh file must contain an $Elements section")]
+    MissingGmshElements,
+    #[error("VTK scalar field '{name}' has {actual} values, but topology has {expected} points")]
+    VtkFieldLengthMismatch {
+        name: String,
+        expected: usize,
+        actual: usize,
+    },
 }
 
 fn parse_usize(line: usize, value: &str) -> Result<usize, FileIoError> {

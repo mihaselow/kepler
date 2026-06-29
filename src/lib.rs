@@ -17,9 +17,11 @@ pub use condition::{
 pub use fem::poisson::{PoissonProblem, PoissonResult, solve_poisson};
 pub use io::{
     FileIoError,
+    gmsh::{ImportedMesh, parse_gmsh_str, read_gmsh_file},
     mesh::{parse_mesh_str, read_mesh_file},
     params::{PoissonFileConfig, SourceConfig, parse_params_str, read_params_file},
     solution::{format_solution, write_solution_file},
+    vtk::{VtkScalarField, format_vtk_legacy, write_vtk_legacy_file},
 };
 pub use linalg::SolverOptions;
 pub use mesh::{
