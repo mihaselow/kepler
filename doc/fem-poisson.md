@@ -30,6 +30,7 @@ The implementation supports first-order triangular elements (`Tri3`) over a 2D m
 - Steady heat transfer API wrappers over the scalar Poisson solver for 2D `Tri3` and 3D `Tet4` problems.
 - Diffusion-reaction solves for 2D `Tri3` and 3D `Tet4` problems with constant diffusivity and reaction rate.
 - Electrostatics API wrappers over the scalar Poisson solver for 2D `Tri3` and 3D `Tet4` problems.
+- Structural modal analysis for constrained 2D `Tri3` and 3D `Tet4` elasticity models with lumped mass.
 
 The solver does not yet support assembled Neumann boundaries, spatially varying conductivity, preconditioning, `Quad4`/`Hex8` assembly, or higher-order elements. The file-driven CLI and REST endpoint still expose the original 2D `Tri3` Poisson solve path.
 
@@ -142,6 +143,52 @@ Current elasticity support includes:
 - Per-node `X`, `Y`, and `Z` displacement constraints for 3D.
 
 The elasticity module does not yet consume `ConditionSet`, region-targeted loads, body forces, traction/pressure conditions, `Hex8` elasticity, or result export helpers for stress/strain recovery.
+
+## Modal Analysis
+
+The modal module computes free-vibration modes from the existing elasticity stiffness assembly and a lumped diagonal mass model.
+
+For 2D:
+
+```rust
+let problem = ModalProblem {
+    elasticity: ElasticityProblem {
+        material,
+        thickness: 1.0,
+        constraints,
+        forces: vec![],
+    },
+    density: 7800.0,
+    mode_count: 6,
+};
+let result = solve_modal(&mesh, &problem)?;
+```
+
+For 3D:
+
+```rust
+let problem = ModalProblem3D {
+    elasticity: ElasticityProblem3D {
+        material,
+        constraints,
+        forces: vec![],
+    },
+    density: 7800.0,
+    mode_count: 6,
+};
+let result = solve_modal_3d(&topology, &problem)?;
+```
+
+Each mode reports `frequency_hz`, `angular_frequency`, and a nodal displacement shape. Fixed degrees of freedom are removed before solving and restored as zero displacement in returned mode shapes.
+
+Current modal support includes:
+
+- 2D `Tri3` and 3D `Tet4` structural modes.
+- Constant density and lumped element mass.
+- Displacement constraints inherited from the elasticity problem.
+- A small dense Jacobi eigenvalue routine for reduced modal systems.
+
+The modal module does not yet support consistent mass matrices, damping, prestress, shift-invert extraction, sparse eigensolvers, rigid-body mode filtering beyond user constraints, `ConditionSet`, `Hex8`, or large production-scale modal extraction.
 
 ## Steady Heat Transfer
 
