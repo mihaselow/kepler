@@ -72,6 +72,36 @@ Available diagnostic solve variants include:
 
 These functions return domain-specific solver result types that preserve field values or displacements while carrying `SolverDiagnostics`.
 
+## File, CLI, And REST Exposure
+
+Poisson `.params` files can request supported solver-stack settings:
+
+```text
+solver max_iterations 10000
+solver tolerance 1e-10
+solver backend conjugate_gradient
+solver preconditioner none
+solver record_residual_history false
+```
+
+The file-driven CLI applies these options via `solve_poisson_with_solver`. It writes the existing compact `.solution` format and prints backend, preconditioner, iteration count, residual norm, and residual history when recording is enabled.
+
+The `/solve/poisson` REST endpoint accepts the same concepts in `solver_options`:
+
+```json
+{
+  "solver_options": {
+    "max_iterations": 10000,
+    "tolerance": 1e-10,
+    "backend": "dense_direct",
+    "preconditioner": "none",
+    "record_residual_history": true
+  }
+}
+```
+
+REST responses include a `diagnostics` object with backend, preconditioner, convergence status, initial residual, and residual history.
+
 ## Nonlinear Solves
 
 `newton_solve` provides a Newton iteration over user-supplied nonlinear systems:

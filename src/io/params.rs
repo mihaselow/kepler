@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, fs, path::Path};
 
 use crate::{
     io::{FileIoError, data_lines, parse_f64, parse_usize},
-    linalg::SolverOptions,
+    linalg::{LinearSolverBackend, LinearSolverOptions, PreconditionerKind, SolverOptions},
     mesh::NodeId,
 };
 
@@ -24,7 +24,7 @@ pub struct PoissonFileConfig {
     pub conductivity: f64,
     pub source: SourceConfig,
     pub dirichlet: Vec<(NodeId, f64)>,
-    pub solver_options: SolverOptions,
+    pub solver_options: LinearSolverOptions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,8 +44,7 @@ pub fn read_params_file(path: impl AsRef<Path>) -> Result<PoissonFileConfig, Fil
 pub fn parse_params_str(input: &str) -> Result<PoissonFileConfig, FileIoError> {
     let mut conductivity = None;
     let mut source = None;
-    let mut max_iterations = SolverOptions::default().max_iterations;
-    let mut tolerance = SolverOptions::default().tolerance;
+    let mut solver_options = LinearSolverOptions::default();
     let mut dirichlet = BTreeMap::new();
     let mut section = None;
 
@@ -77,17 +76,31 @@ pub fn parse_params_str(input: &str) -> Result<PoissonFileConfig, FileIoError> {
                 });
             }
             ["solver", "max_iterations", value] => {
-                max_iterations = parse_usize(line, value)?;
-                if max_iterations == 0 {
+                solver_options.max_iterations = parse_usize(line, value)?;
+                if solver_options.max_iterations == 0 {
                     return Err(FileIoError::InvalidMaxIterations);
                 }
                 section = None;
             }
             ["solver", "tolerance", value] => {
-                tolerance = parse_f64(line, value)?;
-                if !tolerance.is_finite() || tolerance <= 0.0 {
-                    return Err(FileIoError::InvalidTolerance { value: tolerance });
+                solver_options.tolerance = parse_f64(line, value)?;
+                if !solver_options.tolerance.is_finite() || solver_options.tolerance <= 0.0 {
+                    return Err(FileIoError::InvalidTolerance {
+                        value: solver_options.tolerance,
+                    });
                 }
+                section = None;
+            }
+            ["solver", "backend", value] => {
+                solver_options.backend = parse_backend(line, value)?;
+                section = None;
+            }
+            ["solver", "preconditioner", value] => {
+                solver_options.preconditioner = parse_preconditioner(line, value)?;
+                section = None;
+            }
+            ["solver", "record_residual_history", value] => {
+                solver_options.record_residual_history = parse_bool(line, value)?;
                 section = None;
             }
             ["solver", option, ..] => {
@@ -122,11 +135,17 @@ pub fn parse_params_str(input: &str) -> Result<PoissonFileConfig, FileIoError> {
         conductivity,
         source,
         dirichlet: dirichlet.into_iter().collect(),
-        solver_options: SolverOptions {
-            max_iterations,
-            tolerance,
-        },
+        solver_options,
     })
+}
+
+impl PoissonFileConfig {
+    pub fn compatibility_solver_options(&self) -> SolverOptions {
+        SolverOptions {
+            max_iterations: self.solver_options.max_iterations,
+            tolerance: self.solver_options.tolerance,
+        }
+    }
 }
 
 pub fn validate_params_for_mesh(
@@ -165,4 +184,37 @@ fn parse_dirichlet_line(line: usize, tokens: &[&str]) -> Result<(NodeId, f64), F
     }
 
     Ok((parse_usize(line, tokens[0])?, parse_f64(line, tokens[1])?))
+}
+
+fn parse_backend(line: usize, value: &str) -> Result<LinearSolverBackend, FileIoError> {
+    match value {
+        "cg" | "conjugate_gradient" => Ok(LinearSolverBackend::ConjugateGradient),
+        "dense_direct" => Ok(LinearSolverBackend::DenseDirect),
+        _ => Err(FileIoError::UnsupportedSolverBackend {
+            line,
+            backend: value.to_owned(),
+        }),
+    }
+}
+
+fn parse_preconditioner(line: usize, value: &str) -> Result<PreconditionerKind, FileIoError> {
+    match value {
+        "none" => Ok(PreconditionerKind::None),
+        "jacobi" => Ok(PreconditionerKind::Jacobi),
+        _ => Err(FileIoError::UnsupportedPreconditioner {
+            line,
+            preconditioner: value.to_owned(),
+        }),
+    }
+}
+
+fn parse_bool(line: usize, value: &str) -> Result<bool, FileIoError> {
+    match value {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(FileIoError::ParseBool {
+            line,
+            value: value.to_owned(),
+        }),
+    }
 }

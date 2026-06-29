@@ -464,6 +464,9 @@ conductivity 1.0
 source constant 1.0
 solver max_iterations 10000
 solver tolerance 1e-10
+solver backend conjugate_gradient
+solver preconditioner none
+solver record_residual_history false
 
 dirichlet
 0 0.0
@@ -477,6 +480,16 @@ The first file-driven implementation supports only constant source terms:
 ```text
 source constant <value>
 ```
+
+Supported file-driven solver settings are:
+
+- `solver max_iterations <usize>`
+- `solver tolerance <positive-f64>`
+- `solver backend conjugate_gradient|cg|dense_direct`
+- `solver preconditioner none|jacobi`
+- `solver record_residual_history true|false`
+
+The CLI uses these settings through the diagnostic solver-stack API. The `.solution` file keeps the compact compatibility diagnostics, while the CLI prints backend, preconditioner, iterations, residual norm, and residual history when requested.
 
 ### Solution Files
 

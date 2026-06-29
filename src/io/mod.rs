@@ -54,6 +54,12 @@ pub enum FileIoError {
     UnsupportedSource { line: usize, kind: String },
     #[error("line {line}: unsupported solver option '{option}'")]
     UnsupportedSolverOption { line: usize, option: String },
+    #[error("line {line}: unsupported solver backend '{backend}'")]
+    UnsupportedSolverBackend { line: usize, backend: String },
+    #[error("line {line}: unsupported preconditioner '{preconditioner}'")]
+    UnsupportedPreconditioner { line: usize, preconditioner: String },
+    #[error("line {line}: failed to parse boolean '{value}'; expected true or false")]
+    ParseBool { line: usize, value: String },
     #[error("line {line}: duplicate parameter '{name}'")]
     DuplicateParameter { line: usize, name: &'static str },
     #[error("line {line}: duplicate Dirichlet node {node_id}")]

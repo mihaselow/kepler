@@ -82,14 +82,28 @@ fn solve_from_files(
         dirichlet: config.dirichlet,
     };
 
-    let result = kepler::solve_poisson(&mesh, &problem, config.solver_options)?;
-    kepler::write_solution_file(&output_path, &result)?;
+    let result = kepler::solve_poisson_with_solver(&mesh, &problem, config.solver_options)?;
+    let compatibility_result = kepler::PoissonResult::from(result.clone());
+    kepler::write_solution_file(&output_path, &compatibility_result)?;
 
     println!(
         "wrote {} values to {}",
         result.values.len(),
         output_path.display()
     );
+    println!(
+        "solver {:?} with {:?}: {} iterations, residual {}",
+        result.diagnostics.backend,
+        result.diagnostics.preconditioner,
+        result.diagnostics.iterations,
+        result.diagnostics.residual_norm
+    );
+    if !result.diagnostics.residual_history.is_empty() {
+        println!(
+            "residual history: {:?}",
+            result.diagnostics.residual_history
+        );
+    }
 
     Ok(())
 }

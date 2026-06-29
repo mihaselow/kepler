@@ -2,6 +2,9 @@ conductivity 1.0
 source constant 1.0
 solver max_iterations 10000
 solver tolerance 1e-10
+solver backend conjugate_gradient
+solver preconditioner none
+solver record_residual_history false
 
 dirichlet
 0 0.0

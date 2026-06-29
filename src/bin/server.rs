@@ -8,7 +8,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use kepler::{Mesh, Point2, PoissonProblem, SolverOptions, Tri3, solve_poisson};
+use kepler::{
+    LinearSolverBackend, LinearSolverOptions, Mesh, Point2, PoissonProblem, PreconditionerKind,
+    SolverDiagnostics, SolverOptions, Tri3, solve_poisson_with_solver,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -72,13 +75,18 @@ async fn solve_poisson_endpoint(
             .collect(),
     };
 
-    let options = request.solver_options.unwrap_or_default().into();
-    let result = solve_poisson(&mesh, &problem, options)?;
+    let options = request
+        .solver_options
+        .unwrap_or_default()
+        .try_into()
+        .map_err(ApiError::message)?;
+    let result = solve_poisson_with_solver(&mesh, &problem, options)?;
 
     Ok(Json(SolvePoissonResponse {
         values: result.values,
-        iterations: result.iterations,
-        residual_norm: result.residual_norm,
+        iterations: result.diagnostics.iterations,
+        residual_norm: result.diagnostics.residual_norm,
+        diagnostics: DiagnosticsResponse::from(result.diagnostics),
     }))
 }
 
@@ -171,15 +179,36 @@ struct SolverOptionsRequest {
     max_iterations: Option<usize>,
     #[serde(default)]
     tolerance: Option<f64>,
+    #[serde(default)]
+    backend: Option<String>,
+    #[serde(default)]
+    preconditioner: Option<String>,
+    #[serde(default)]
+    record_residual_history: Option<bool>,
 }
 
-impl From<SolverOptionsRequest> for SolverOptions {
-    fn from(value: SolverOptionsRequest) -> Self {
+impl TryFrom<SolverOptionsRequest> for LinearSolverOptions {
+    type Error = String;
+
+    fn try_from(value: SolverOptionsRequest) -> Result<Self, Self::Error> {
         let defaults = SolverOptions::default();
-        Self {
+        Ok(Self {
             max_iterations: value.max_iterations.unwrap_or(defaults.max_iterations),
             tolerance: value.tolerance.unwrap_or(defaults.tolerance),
-        }
+            backend: match value.backend.as_deref() {
+                None | Some("cg") | Some("conjugate_gradient") => {
+                    LinearSolverBackend::ConjugateGradient
+                }
+                Some("dense_direct") => LinearSolverBackend::DenseDirect,
+                Some(value) => return Err(format!("unsupported solver backend '{value}'")),
+            },
+            preconditioner: match value.preconditioner.as_deref() {
+                None | Some("none") => PreconditionerKind::None,
+                Some("jacobi") => PreconditionerKind::Jacobi,
+                Some(value) => return Err(format!("unsupported preconditioner '{value}'")),
+            },
+            record_residual_history: value.record_residual_history.unwrap_or(false),
+        })
     }
 }
 
@@ -188,6 +217,34 @@ struct SolvePoissonResponse {
     values: Vec<f64>,
     iterations: usize,
     residual_norm: f64,
+    diagnostics: DiagnosticsResponse,
+}
+
+#[derive(Debug, Serialize)]
+struct DiagnosticsResponse {
+    backend: &'static str,
+    preconditioner: &'static str,
+    converged: bool,
+    initial_residual_norm: f64,
+    residual_history: Vec<f64>,
+}
+
+impl From<SolverDiagnostics> for DiagnosticsResponse {
+    fn from(value: SolverDiagnostics) -> Self {
+        Self {
+            backend: match value.backend {
+                LinearSolverBackend::ConjugateGradient => "conjugate_gradient",
+                LinearSolverBackend::DenseDirect => "dense_direct",
+            },
+            preconditioner: match value.preconditioner {
+                PreconditionerKind::None => "none",
+                PreconditionerKind::Jacobi => "jacobi",
+            },
+            converged: value.converged,
+            initial_residual_norm: value.initial_residual_norm,
+            residual_history: value.residual_history,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -206,6 +263,13 @@ impl ApiError {
         Self {
             status: StatusCode::BAD_REQUEST,
             message: error.to_string(),
+        }
+    }
+
+    fn message(message: String) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message,
         }
     }
 }
@@ -281,6 +345,67 @@ mod tests {
         assert_eq!(body["values"][0], json!(0.0));
         assert_eq!(body["values"][4], json!(1.0 / 12.0));
         assert_eq!(body["iterations"], json!(1));
+        assert_eq!(body["diagnostics"]["backend"], json!("conjugate_gradient"));
+        assert_eq!(body["diagnostics"]["preconditioner"], json!("none"));
+    }
+
+    #[tokio::test]
+    async fn solve_endpoint_accepts_solver_stack_options() {
+        let mut request = square_request();
+        request["solver_options"]["backend"] = json!("dense_direct");
+        request["solver_options"]["preconditioner"] = json!("none");
+        request["solver_options"]["record_residual_history"] = json!(true);
+
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/solve/poisson")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["diagnostics"]["backend"], json!("dense_direct"));
+        assert_eq!(body["diagnostics"]["preconditioner"], json!("none"));
+        assert_eq!(
+            body["diagnostics"]["residual_history"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn solve_endpoint_rejects_unknown_solver_backend() {
+        let mut request = square_request();
+        request["solver_options"]["backend"] = json!("magic");
+
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/solve/poisson")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = body_json(response).await;
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("unsupported solver backend")
+        );
     }
 
     #[tokio::test]

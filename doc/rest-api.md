@@ -61,12 +61,15 @@ Request:
   },
   "solver_options": {
     "max_iterations": 10000,
-    "tolerance": 1e-10
+    "tolerance": 1e-10,
+    "backend": "conjugate_gradient",
+    "preconditioner": "none",
+    "record_residual_history": false
   }
 }
 ```
 
-`solver_options` is optional. Missing solver option fields fall back to `SolverOptions::default()`.
+`solver_options` is optional. Missing iteration and tolerance fields fall back to `SolverOptions::default()`. Supported `backend` values are `conjugate_gradient`, `cg`, and `dense_direct`. Supported `preconditioner` values are `none` and `jacobi`.
 
 Response:
 
@@ -74,7 +77,14 @@ Response:
 {
   "values": [0.0, 0.0, 0.0, 0.0, 0.08333333333333333],
   "iterations": 1,
-  "residual_norm": 0.0
+  "residual_norm": 0.0,
+  "diagnostics": {
+    "backend": "conjugate_gradient",
+    "preconditioner": "none",
+    "converged": true,
+    "initial_residual_norm": 0.16666666666666666,
+    "residual_history": []
+  }
 }
 ```
 
@@ -122,4 +132,4 @@ curl -s http://127.0.0.1:3000/solve/poisson \
 
 ## Current Scope
 
-The REST API mirrors the original 2D Poisson solver scope: 2D `Tri3` meshes, constant conductivity, constant source terms, Dirichlet boundaries, and Conjugate Gradient solver options. The library now also has dimension-aware topology, geometry annotation, shared condition, Gmsh import, VTK export, 3D `Tet4` Poisson, 2D/3D linear elasticity, steady heat transfer, diffusion-reaction, electrostatics, modal-analysis primitives, and a richer linalg solver stack, but this endpoint does not yet accept generic `ElementKind` payloads, named-region material assignments, arbitrary parameter assignments, general `ConditionSet` payloads, Gmsh uploads, VTK downloads, 3D meshes, heat problems, diffusion-reaction problems, electrostatics problems, elasticity problems, modal problems, direct solver backend selection, preconditioners, nonlinear solves, or transient solves. It does not yet provide asynchronous job storage, uploaded mesh files, authentication, or multiple physics endpoints.
+The REST API mirrors the original 2D Poisson solver scope: 2D `Tri3` meshes, constant conductivity, constant source terms, and Dirichlet boundaries. It now exposes supported linear solver backend selection, preconditioner selection, and residual-history diagnostics for that endpoint. The library also has dimension-aware topology, geometry annotation, shared condition, Gmsh import, VTK export, 3D `Tet4` Poisson, 2D/3D linear elasticity, steady heat transfer, diffusion-reaction, electrostatics, modal-analysis primitives, and a richer linalg solver stack, but this endpoint does not yet accept generic `ElementKind` payloads, named-region material assignments, arbitrary parameter assignments, general `ConditionSet` payloads, Gmsh uploads, VTK downloads, 3D meshes, heat problems, diffusion-reaction problems, electrostatics problems, elasticity problems, modal problems, nonlinear solves, or transient solves. It does not yet provide asynchronous job storage, uploaded mesh files, authentication, or multiple physics endpoints.

@@ -1,6 +1,6 @@
 use kepler::{
-    FileIoError, PoissonProblem, SolverOptions, format_solution, parse_mesh_str, parse_params_str,
-    solve_poisson,
+    FileIoError, LinearSolverBackend, PoissonProblem, PreconditionerKind, format_solution,
+    parse_mesh_str, parse_params_str, solve_poisson_with_solver,
 };
 
 const EPS: f64 = 1.0e-12;
@@ -62,7 +62,45 @@ fn parses_params_file_format() {
 
     assert_close(config.conductivity, 1.0);
     assert_eq!(config.dirichlet.len(), 4);
-    assert_eq!(config.solver_options, SolverOptions::default());
+    assert_eq!(
+        config.solver_options.backend,
+        LinearSolverBackend::ConjugateGradient
+    );
+    assert_eq!(
+        config.solver_options.preconditioner,
+        PreconditionerKind::None
+    );
+}
+
+#[test]
+fn params_parser_accepts_solver_stack_options() {
+    let config = parse_params_str(
+        r#"
+conductivity 1.0
+source constant 1.0
+solver max_iterations 25
+solver tolerance 1e-8
+solver backend dense_direct
+solver preconditioner jacobi
+solver record_residual_history true
+
+dirichlet
+0 0.0
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(config.solver_options.max_iterations, 25);
+    assert_close(config.solver_options.tolerance, 1.0e-8);
+    assert_eq!(
+        config.solver_options.backend,
+        LinearSolverBackend::DenseDirect
+    );
+    assert_eq!(
+        config.solver_options.preconditioner,
+        PreconditionerKind::Jacobi
+    );
+    assert!(config.solver_options.record_residual_history);
 }
 
 #[test]
@@ -76,6 +114,23 @@ source expression x
     .unwrap_err();
 
     assert!(matches!(error, FileIoError::UnsupportedSource { .. }));
+}
+
+#[test]
+fn params_parser_rejects_unsupported_solver_stack_options() {
+    let error = parse_params_str(
+        r#"
+conductivity 1.0
+source constant 1.0
+solver backend magic
+"#,
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        FileIoError::UnsupportedSolverBackend { .. }
+    ));
 }
 
 #[test]
@@ -123,7 +178,7 @@ fn file_driven_square_solve_matches_programmatic_reference() {
         dirichlet: config.dirichlet,
     };
 
-    let result = solve_poisson(&mesh, &problem, config.solver_options).unwrap();
+    let result = solve_poisson_with_solver(&mesh, &problem, config.solver_options).unwrap();
 
     assert_close(result.values[4], 1.0 / 12.0);
 }
