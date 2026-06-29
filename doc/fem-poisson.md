@@ -27,6 +27,7 @@ The implementation supports first-order triangular elements (`Tri3`) over a 2D m
 - Legacy VTK unstructured-grid export for topology and point scalar fields.
 - REST solves through the separate `server` binary.
 - 2D linear elasticity on `Tri3` meshes with displacement constraints and nodal forces.
+- Steady heat transfer API wrappers over the scalar Poisson solver for 2D `Tri3` and 3D `Tet4` problems.
 
 The solver does not yet support assembled Neumann boundaries, spatially varying conductivity, preconditioning, `Quad4`/`Hex8` assembly, higher-order elements, or 3D elasticity. The file-driven CLI and REST endpoint still expose the original 2D `Tri3` Poisson solve path.
 
@@ -110,6 +111,32 @@ Current elasticity support includes:
 - Constant-strain triangle stiffness assembly.
 
 The elasticity module does not yet consume `ConditionSet`, region-targeted loads, body forces, traction/pressure conditions, 3D `Tet4` elasticity, or result export helpers for stress/strain recovery.
+
+## Steady Heat Transfer
+
+The heat module provides thermal vocabulary over the scalar Poisson solver:
+
+```rust
+let problem = SteadyHeatProblem {
+    thermal_conductivity: 1.0,
+    heat_generation: |x, y| 1.0,
+    prescribed_temperatures: vec![(0, 300.0), (1, 300.0)],
+};
+let result = solve_steady_heat(&mesh, &problem, SolverOptions::default())?;
+```
+
+For 3D `Tet4` topologies:
+
+```rust
+let problem = SteadyHeatProblem3D {
+    thermal_conductivity: 1.0,
+    heat_generation: |x, y, z| 1.0,
+    prescribed_temperatures: vec![(1, 300.0), (2, 300.0), (3, 300.0)],
+};
+let result = solve_steady_heat_3d(&topology, &problem, SolverOptions::default())?;
+```
+
+`TemperatureResult::temperatures` contains one nodal temperature per mesh node. Heat transfer currently supports constant thermal conductivity, centroid heat generation, and prescribed nodal temperatures. It does not yet assemble convection, heat flux, radiation, or region-targeted thermal conditions.
 
 ## Mesh Core
 

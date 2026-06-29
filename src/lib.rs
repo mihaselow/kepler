@@ -18,6 +18,10 @@ pub use fem::elasticity::{
     DisplacementComponent, DisplacementConstraint, ElasticityError, ElasticityMaterial,
     ElasticityModel, ElasticityProblem, ElasticityResult, NodalForce, solve_elasticity,
 };
+pub use fem::heat::{
+    SteadyHeatProblem, SteadyHeatProblem3D, TemperatureResult, solve_steady_heat,
+    solve_steady_heat_3d,
+};
 pub use fem::poisson::{
     PoissonProblem, PoissonProblem3D, PoissonResult, solve_poisson, solve_poisson_3d,
 };
