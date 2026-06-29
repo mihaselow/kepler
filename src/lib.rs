@@ -22,6 +22,10 @@ pub use fem::elasticity::{
     DisplacementComponent, DisplacementConstraint, ElasticityError, ElasticityMaterial,
     ElasticityModel, ElasticityProblem, ElasticityResult, NodalForce, solve_elasticity,
 };
+pub use fem::electrostatics::{
+    ElectricPotentialResult, ElectrostaticProblem, ElectrostaticProblem3D, solve_electrostatics,
+    solve_electrostatics_3d,
+};
 pub use fem::heat::{
     SteadyHeatProblem, SteadyHeatProblem3D, TemperatureResult, solve_steady_heat,
     solve_steady_heat_3d,

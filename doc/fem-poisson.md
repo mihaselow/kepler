@@ -29,6 +29,7 @@ The implementation supports first-order triangular elements (`Tri3`) over a 2D m
 - 2D linear elasticity on `Tri3` meshes with displacement constraints and nodal forces.
 - Steady heat transfer API wrappers over the scalar Poisson solver for 2D `Tri3` and 3D `Tet4` problems.
 - Diffusion-reaction solves for 2D `Tri3` and 3D `Tet4` problems with constant diffusivity and reaction rate.
+- Electrostatics API wrappers over the scalar Poisson solver for 2D `Tri3` and 3D `Tet4` problems.
 
 The solver does not yet support assembled Neumann boundaries, spatially varying conductivity, preconditioning, `Quad4`/`Hex8` assembly, higher-order elements, or 3D elasticity. The file-driven CLI and REST endpoint still expose the original 2D `Tri3` Poisson solve path.
 
@@ -172,6 +173,38 @@ let result = solve_diffusion_reaction_3d(&topology, &problem, SolverOptions::def
 ```
 
 Diffusion-reaction uses the existing scalar stiffness and load assembly plus a consistent reaction matrix. The reaction rate must be finite and non-negative. The module currently supports constant coefficients and nodal Dirichlet constraints; it does not yet consume `ConditionSet` or region-targeted material fields.
+
+## Electrostatics
+
+The electrostatics module solves the scalar potential equation:
+
+```text
+-div(epsilon grad phi) = rho
+```
+
+For 2D `Tri3` meshes:
+
+```rust
+let problem = ElectrostaticProblem {
+    permittivity: 1.0,
+    charge_density: |x, y| 1.0,
+    prescribed_potentials: vec![(0, 0.0), (1, 0.0)],
+};
+let result = solve_electrostatics(&mesh, &problem, SolverOptions::default())?;
+```
+
+For 3D `Tet4` topologies:
+
+```rust
+let problem = ElectrostaticProblem3D {
+    permittivity: 1.0,
+    charge_density: |x, y, z| 1.0,
+    prescribed_potentials: vec![(1, 0.0), (2, 0.0), (3, 0.0)],
+};
+let result = solve_electrostatics_3d(&topology, &problem, SolverOptions::default())?;
+```
+
+`ElectricPotentialResult::potentials` contains one nodal electric potential per mesh node. Electrostatics currently supports constant permittivity, centroid charge density, and prescribed nodal potentials. It does not yet compute electric field recovery, capacitance, dielectric interfaces, or region-targeted charge/permittivity fields.
 
 ## Mesh Core
 
