@@ -24,11 +24,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let result = solve_poisson(&mesh, &problem, SolverOptions::default())?;
-    println!("center value: {:.6}", result.values[4]);
-    println!(
-        "CG iterations: {}, residual: {:.3e}",
-        result.iterations, result.residual_norm
-    );
+
+    for (node_id, value) in result.values.iter().enumerate() {
+        println!("u[{node_id}] = {value:.6}");
+    }
 
     Ok(())
 }
