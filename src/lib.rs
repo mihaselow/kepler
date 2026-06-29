@@ -1,4 +1,5 @@
 pub mod annotation;
+pub mod condition;
 pub mod fem;
 pub mod io;
 pub mod linalg;
@@ -8,6 +9,10 @@ pub use annotation::{
     AnnotationError, AnnotationId, EntitySelector, GeometryAnnotations, MaterialAssignment,
     Parameter, ParameterAssignment, ParameterId, ParameterValue, ResolvedAnnotations,
     ResolvedMaterialAssignment, ResolvedParameterAssignment,
+};
+pub use condition::{
+    Condition, ConditionError, ConditionId, ConditionKind, ConditionSet, ConditionSignature,
+    ResolvedCondition, ResolvedConditionSet,
 };
 pub use fem::poisson::{PoissonProblem, PoissonResult, solve_poisson};
 pub use io::{

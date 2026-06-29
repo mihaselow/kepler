@@ -13,6 +13,7 @@ The implementation uses first-order triangular elements (`Tri3`) over a 2D mesh.
 - 2D points and triangular connectivity through `Mesh`, `Point2`, and `Tri3`.
 - Dimension-aware mesh core primitives through `PointD`, `Point3`, `Cell`, `ElementKind`, `Region`, and `MeshTopology`.
 - Geometry annotation primitives through `EntitySelector`, `GeometryAnnotations`, `MaterialAssignment`, and `ParameterAssignment`.
+- Shared condition primitives through `ConditionSet`, `Condition`, and `ConditionKind`.
 - Constant positive scalar conductivity `k`.
 - Source term callback `f(x, y)` evaluated at each triangle centroid.
 - Dirichlet boundary conditions specified as `(node_id, value)` pairs.
@@ -95,6 +96,47 @@ let resolved = annotations.validate_for_topology(&topology)?;
 ```
 
 This is a platform foundation for applying future loads, constraints, material models, and solver parameters to named geometry or mesh entities. The current Poisson solver still uses its existing node-based Dirichlet and scalar conductivity API; annotations are validated and resolved separately for now.
+
+## Loads And Conditions
+
+The shared condition layer lets callers describe region-targeted loads and constraints independently from a specific physics assembler:
+
+```rust
+let conditions = ConditionSet::new()
+    .with_condition(Condition::new(
+        0,
+        "fixed temperature",
+        EntitySelector::region_name("left"),
+        ConditionKind::Dirichlet {
+            field: "temperature".to_owned(),
+            value: ParameterValue::Scalar(300.0),
+        },
+    ))
+    .with_condition(Condition::new(
+        1,
+        "heat flux",
+        EntitySelector::region_name("left"),
+        ConditionKind::HeatFlux {
+            value: 25.0,
+            units: Some("W/m^2".to_owned()),
+        },
+    ));
+
+let resolved = conditions.validate_for_topology(&topology)?;
+```
+
+Supported condition kinds currently include:
+
+- `Dirichlet`
+- `Neumann`
+- `Robin`
+- `PointLoad`
+- `BodyLoad`
+- `Traction`
+- `Pressure`
+- `HeatFlux`
+
+Validation resolves region selectors, rejects duplicate condition IDs, rejects duplicate condition signatures on the same region, and checks that point, boundary, and domain loads target regions with compatible dimensions. These conditions are a platform model only at this stage; Poisson assembly does not yet consume `ConditionSet`.
 
 ## Mesh Requirements
 
