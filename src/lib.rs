@@ -14,7 +14,9 @@ pub use condition::{
     Condition, ConditionError, ConditionId, ConditionKind, ConditionSet, ConditionSignature,
     ResolvedCondition, ResolvedConditionSet,
 };
-pub use fem::poisson::{PoissonProblem, PoissonResult, solve_poisson};
+pub use fem::poisson::{
+    PoissonProblem, PoissonProblem3D, PoissonResult, solve_poisson, solve_poisson_3d,
+};
 pub use io::{
     FileIoError,
     gmsh::{ImportedMesh, parse_gmsh_str, read_gmsh_file},

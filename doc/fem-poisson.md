@@ -1,12 +1,12 @@
 # Minimal FEM Solver
 
-Kepler currently includes a minimal finite element solver for the 2D scalar Poisson equation, suitable as the first bare solver foundation for steady heat diffusion or similar scalar field problems.
+Kepler currently includes a minimal finite element solver for the scalar Poisson equation, suitable as the first bare solver foundation for steady heat diffusion or similar scalar field problems.
 
 ```text
 -div(k grad u) = f
 ```
 
-The implementation uses first-order triangular elements (`Tri3`) over a 2D mesh.
+The implementation supports first-order triangular elements (`Tri3`) over a 2D mesh and first-order tetrahedral elements (`Tet4`) over a 3D topology.
 
 ## Supported Functionality
 
@@ -15,18 +15,19 @@ The implementation uses first-order triangular elements (`Tri3`) over a 2D mesh.
 - Geometry annotation primitives through `EntitySelector`, `GeometryAnnotations`, `MaterialAssignment`, and `ParameterAssignment`.
 - Shared condition primitives through `ConditionSet`, `Condition`, and `ConditionKind`.
 - Constant positive scalar conductivity `k`.
-- Source term callback `f(x, y)` evaluated at each triangle centroid.
+- Source term callbacks evaluated at each element centroid.
 - Dirichlet boundary conditions specified as `(node_id, value)` pairs.
 - Sparse global stiffness assembly using `sprs`.
 - Conjugate Gradient solve for symmetric positive definite systems.
 - Solver diagnostics with iteration count and residual norm.
 - File-driven solves from `.mesh` and `.params` inputs.
 - `.solution` output with nodal values and diagnostics.
+- 3D `Tet4` Poisson assembly and solve through `MeshTopology<3>`.
 - Gmsh ASCII 2.x mesh import into `MeshTopology`.
 - Legacy VTK unstructured-grid export for topology and point scalar fields.
 - REST solves through the separate `server` binary.
 
-The solver does not yet support Neumann boundaries, spatially varying conductivity, preconditioning, or higher-order elements. The platform mesh core now has early 3D/topology primitives, but the Poisson solver itself still solves 2D `Tri3` meshes only.
+The solver does not yet support assembled Neumann boundaries, spatially varying conductivity, preconditioning, `Quad4`/`Hex8` assembly, or higher-order elements. The file-driven CLI and REST endpoint still expose the original 2D `Tri3` solve path.
 
 ## Public API
 
@@ -51,6 +52,19 @@ let result = solve_poisson(&mesh, &problem, SolverOptions::default())?;
 ```
 
 `PoissonResult::values` contains one scalar value per mesh node. `iterations` and `residual_norm` report the Conjugate Gradient convergence behavior.
+
+The 3D solve path uses `MeshTopology<3>` and `Tet4` volume cells:
+
+```rust
+let problem = PoissonProblem3D {
+    conductivity: 1.0,
+    source: |x, y, z| 1.0,
+    dirichlet: vec![(1, 0.0), (2, 0.0), (3, 0.0)],
+};
+let result = solve_poisson_3d(&topology, &problem, SolverOptions::default())?;
+```
+
+`solve_poisson_3d` assembles `Tet4` cells and ignores lower-dimensional boundary cells currently stored in the topology. `Hex8` cells are validated by the mesh core but are not assembled by Poisson yet.
 
 ## Mesh Core
 
@@ -156,8 +170,8 @@ Triangle orientation may be clockwise or counter-clockwise. Element area is trea
 For each triangle, the solver:
 
 1. Computes area, centroid, and P1 basis gradients.
-2. Builds the local stiffness matrix with `area * k * dot(grad_i, grad_j)`.
-3. Builds the local load vector with `f(centroid) * area / 3`.
+2. Builds the local stiffness matrix with `measure * k * dot(grad_i, grad_j)`.
+3. Builds the local load vector using centroid quadrature.
 4. Adds local contributions into sparse global triplets.
 5. Converts triplets to CSR format.
 6. Applies Dirichlet constraints by adjusting unconstrained rows and replacing constrained rows with identity rows.

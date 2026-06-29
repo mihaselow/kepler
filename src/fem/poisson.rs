@@ -5,10 +5,16 @@ use thiserror::Error;
 
 use crate::{
     linalg::{LinalgError, SolverOptions, conjugate_gradient},
-    mesh::{Mesh, NodeId, Point2, Tri3},
+    mesh::{ElementKind, Mesh, MeshTopology, NodeId, Point2, Point3, Tri3},
 };
 
 pub struct PoissonProblem<F> {
+    pub conductivity: f64,
+    pub source: F,
+    pub dirichlet: Vec<(NodeId, f64)>,
+}
+
+pub struct PoissonProblem3D<F> {
     pub conductivity: f64,
     pub source: F,
     pub dirichlet: Vec<(NodeId, f64)>,
@@ -31,6 +37,13 @@ pub enum PoissonError {
     DuplicateBoundaryNode { node_id: NodeId },
     #[error("source evaluated to a non-finite value at ({x}, {y})")]
     NonFiniteSource { x: f64, y: f64 },
+    #[error("source evaluated to a non-finite value at ({x}, {y}, {z})")]
+    NonFiniteSource3D { x: f64, y: f64, z: f64 },
+    #[error("cell {cell_index} has unsupported element kind {kind:?} for 3D Poisson")]
+    UnsupportedElementKind {
+        cell_index: usize,
+        kind: ElementKind,
+    },
     #[error("linear solver failed")]
     LinearSolve(#[from] LinalgError),
 }
@@ -44,6 +57,24 @@ where
     F: Fn(f64, f64) -> f64,
 {
     let (matrix, rhs) = assemble_poisson_system(mesh, problem)?;
+    let result = conjugate_gradient(&matrix, &rhs, options)?;
+
+    Ok(PoissonResult {
+        values: result.values,
+        iterations: result.iterations,
+        residual_norm: result.residual_norm,
+    })
+}
+
+pub fn solve_poisson_3d<F>(
+    mesh: &MeshTopology<3>,
+    problem: &PoissonProblem3D<F>,
+    options: SolverOptions,
+) -> Result<PoissonResult, PoissonError>
+where
+    F: Fn(f64, f64, f64) -> f64,
+{
+    let (matrix, rhs) = assemble_poisson_3d_system(mesh, problem)?;
     let result = conjugate_gradient(&matrix, &rhs, options)?;
 
     Ok(PoissonResult {
@@ -77,6 +108,56 @@ where
             rhs[global_row] += load[local_row];
             for (local_col, global_col) in triangle.nodes.iter().copied().enumerate() {
                 triplets.add_triplet(global_row, global_col, stiffness[local_row][local_col]);
+            }
+        }
+    }
+
+    let matrix = triplets.to_csr();
+    Ok(apply_dirichlet(matrix, rhs, &dirichlet))
+}
+
+pub fn assemble_poisson_3d_system<F>(
+    mesh: &MeshTopology<3>,
+    problem: &PoissonProblem3D<F>,
+) -> Result<(CsMat<f64>, Vec<f64>), PoissonError>
+where
+    F: Fn(f64, f64, f64) -> f64,
+{
+    validate_conductivity(problem.conductivity)?;
+    let dirichlet = validate_dirichlet(mesh.points().len(), &problem.dirichlet)?;
+    let tet_count = mesh
+        .cells()
+        .iter()
+        .filter(|cell| cell.kind == ElementKind::Tet4)
+        .count();
+    let mut triplets =
+        TriMat::with_capacity((mesh.points().len(), mesh.points().len()), tet_count * 16);
+    let mut rhs = vec![0.0; mesh.points().len()];
+
+    for (cell_index, cell) in mesh.cells().iter().enumerate() {
+        match cell.kind {
+            ElementKind::Tet4 => {
+                let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2], cell.nodes[3]];
+                let stiffness = local_tet4_stiffness(mesh, nodes, problem.conductivity)?;
+                let load = local_tet4_load(mesh, nodes, &problem.source)?;
+
+                for (local_row, global_row) in nodes.iter().copied().enumerate() {
+                    rhs[global_row] += load[local_row];
+                    for (local_col, global_col) in nodes.iter().copied().enumerate() {
+                        triplets.add_triplet(
+                            global_row,
+                            global_col,
+                            stiffness[local_row][local_col],
+                        );
+                    }
+                }
+            }
+            ElementKind::Line2 | ElementKind::Tri3 | ElementKind::Quad4 => {}
+            ElementKind::Hex8 => {
+                return Err(PoissonError::UnsupportedElementKind {
+                    cell_index,
+                    kind: cell.kind,
+                });
             }
         }
     }
@@ -119,6 +200,49 @@ where
     }
 
     Ok([source_value * area / 3.0; 3])
+}
+
+pub fn local_tet4_stiffness(
+    mesh: &MeshTopology<3>,
+    nodes: [NodeId; 4],
+    conductivity: f64,
+) -> Result<[[f64; 4]; 4], PoissonError> {
+    validate_conductivity(conductivity)?;
+    let (volume, gradients, _) = tetrahedron_geometry(mesh, nodes);
+    let mut stiffness = [[0.0; 4]; 4];
+
+    for row in 0..4 {
+        for col in 0..4 {
+            stiffness[row][col] = conductivity
+                * volume
+                * (gradients[row][0] * gradients[col][0]
+                    + gradients[row][1] * gradients[col][1]
+                    + gradients[row][2] * gradients[col][2]);
+        }
+    }
+
+    Ok(stiffness)
+}
+
+pub fn local_tet4_load<F>(
+    mesh: &MeshTopology<3>,
+    nodes: [NodeId; 4],
+    source: F,
+) -> Result<[f64; 4], PoissonError>
+where
+    F: Fn(f64, f64, f64) -> f64,
+{
+    let (volume, _, centroid) = tetrahedron_geometry(mesh, nodes);
+    let source_value = source(centroid.coords[0], centroid.coords[1], centroid.coords[2]);
+    if !source_value.is_finite() {
+        return Err(PoissonError::NonFiniteSource3D {
+            x: centroid.coords[0],
+            y: centroid.coords[1],
+            z: centroid.coords[2],
+        });
+    }
+
+    Ok([source_value * volume / 4.0; 4])
 }
 
 fn validate_conductivity(conductivity: f64) -> Result<(), PoissonError> {
@@ -198,4 +322,75 @@ fn triangle_geometry(mesh: &Mesh, triangle: &Tri3) -> (f64, [[f64; 2]; 3], Point
     let centroid = Point2::new((a.x + b.x + c.x) / 3.0, (a.y + b.y + c.y) / 3.0);
 
     (area, gradients, centroid)
+}
+
+fn tetrahedron_geometry(
+    mesh: &MeshTopology<3>,
+    nodes: [NodeId; 4],
+) -> (f64, [[f64; 3]; 4], Point3) {
+    let [a, b, c, d] = nodes.map(|node| mesh.points()[node]);
+    let jacobian = [
+        [
+            b.coords[0] - a.coords[0],
+            c.coords[0] - a.coords[0],
+            d.coords[0] - a.coords[0],
+        ],
+        [
+            b.coords[1] - a.coords[1],
+            c.coords[1] - a.coords[1],
+            d.coords[1] - a.coords[1],
+        ],
+        [
+            b.coords[2] - a.coords[2],
+            c.coords[2] - a.coords[2],
+            d.coords[2] - a.coords[2],
+        ],
+    ];
+    let determinant = determinant_3(jacobian);
+    let volume = determinant.abs() / 6.0;
+    let inverse = inverse_3(jacobian, determinant);
+    let gradients = [
+        [
+            -(inverse[0][0] + inverse[1][0] + inverse[2][0]),
+            -(inverse[0][1] + inverse[1][1] + inverse[2][1]),
+            -(inverse[0][2] + inverse[1][2] + inverse[2][2]),
+        ],
+        inverse[0],
+        inverse[1],
+        inverse[2],
+    ];
+    let centroid = Point3::new([
+        (a.coords[0] + b.coords[0] + c.coords[0] + d.coords[0]) / 4.0,
+        (a.coords[1] + b.coords[1] + c.coords[1] + d.coords[1]) / 4.0,
+        (a.coords[2] + b.coords[2] + c.coords[2] + d.coords[2]) / 4.0,
+    ]);
+
+    (volume, gradients, centroid)
+}
+
+fn determinant_3(matrix: [[f64; 3]; 3]) -> f64 {
+    matrix[0][0] * (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1])
+        - matrix[0][1] * (matrix[1][0] * matrix[2][2] - matrix[1][2] * matrix[2][0])
+        + matrix[0][2] * (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0])
+}
+
+fn inverse_3(matrix: [[f64; 3]; 3], determinant: f64) -> [[f64; 3]; 3] {
+    let inv_det = 1.0 / determinant;
+    [
+        [
+            (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1]) * inv_det,
+            (matrix[0][2] * matrix[2][1] - matrix[0][1] * matrix[2][2]) * inv_det,
+            (matrix[0][1] * matrix[1][2] - matrix[0][2] * matrix[1][1]) * inv_det,
+        ],
+        [
+            (matrix[1][2] * matrix[2][0] - matrix[1][0] * matrix[2][2]) * inv_det,
+            (matrix[0][0] * matrix[2][2] - matrix[0][2] * matrix[2][0]) * inv_det,
+            (matrix[0][2] * matrix[1][0] - matrix[0][0] * matrix[1][2]) * inv_det,
+        ],
+        [
+            (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0]) * inv_det,
+            (matrix[0][1] * matrix[2][0] - matrix[0][0] * matrix[2][1]) * inv_det,
+            (matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0]) * inv_det,
+        ],
+    ]
 }
