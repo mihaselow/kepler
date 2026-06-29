@@ -26,12 +26,12 @@ The implementation supports first-order triangular elements (`Tri3`) over a 2D m
 - Gmsh ASCII 2.x mesh import into `MeshTopology`.
 - Legacy VTK unstructured-grid export for topology and point scalar fields.
 - REST solves through the separate `server` binary.
-- 2D linear elasticity on `Tri3` meshes with displacement constraints and nodal forces.
+- Linear elasticity on 2D `Tri3` meshes and 3D `Tet4` topologies with displacement constraints and nodal forces.
 - Steady heat transfer API wrappers over the scalar Poisson solver for 2D `Tri3` and 3D `Tet4` problems.
 - Diffusion-reaction solves for 2D `Tri3` and 3D `Tet4` problems with constant diffusivity and reaction rate.
 - Electrostatics API wrappers over the scalar Poisson solver for 2D `Tri3` and 3D `Tet4` problems.
 
-The solver does not yet support assembled Neumann boundaries, spatially varying conductivity, preconditioning, `Quad4`/`Hex8` assembly, higher-order elements, or 3D elasticity. The file-driven CLI and REST endpoint still expose the original 2D `Tri3` Poisson solve path.
+The solver does not yet support assembled Neumann boundaries, spatially varying conductivity, preconditioning, `Quad4`/`Hex8` assembly, or higher-order elements. The file-driven CLI and REST endpoint still expose the original 2D `Tri3` Poisson solve path.
 
 ## Public API
 
@@ -72,7 +72,9 @@ let result = solve_poisson_3d(&topology, &problem, SolverOptions::default())?;
 
 ## Linear Elasticity
 
-The elasticity module provides an initial 2D small-strain linear elasticity solver for `Tri3` meshes:
+The elasticity module provides small-strain linear elasticity solvers for 2D `Tri3` meshes and 3D `Tet4` topologies.
+
+For 2D:
 
 ```rust
 let problem = ElasticityProblem {
@@ -103,6 +105,31 @@ let problem = ElasticityProblem {
 let result = solve_elasticity(&mesh, &problem, SolverOptions::default())?;
 ```
 
+For 3D:
+
+```rust
+let problem = ElasticityProblem3D {
+    material: ElasticityMaterial3D {
+        young_modulus: 210.0e9,
+        poisson_ratio: 0.3,
+    },
+    constraints: vec![
+        DisplacementConstraint3D {
+            node: 0,
+            component: DisplacementComponent3D::X,
+            value: 0.0,
+        },
+    ],
+    forces: vec![NodalForce3D {
+        node: 1,
+        fx: 100.0,
+        fy: 0.0,
+        fz: 0.0,
+    }],
+};
+let result = solve_elasticity_3d(&topology, &problem, SolverOptions::default())?;
+```
+
 Current elasticity support includes:
 
 - Constant material over the mesh.
@@ -111,8 +138,10 @@ Current elasticity support includes:
 - Nodal forces.
 - Per-node `X` and `Y` displacement constraints.
 - Constant-strain triangle stiffness assembly.
+- 3D isotropic `Tet4` stiffness assembly.
+- Per-node `X`, `Y`, and `Z` displacement constraints for 3D.
 
-The elasticity module does not yet consume `ConditionSet`, region-targeted loads, body forces, traction/pressure conditions, 3D `Tet4` elasticity, or result export helpers for stress/strain recovery.
+The elasticity module does not yet consume `ConditionSet`, region-targeted loads, body forces, traction/pressure conditions, `Hex8` elasticity, or result export helpers for stress/strain recovery.
 
 ## Steady Heat Transfer
 

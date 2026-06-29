@@ -19,8 +19,10 @@ pub use fem::diffusion_reaction::{
     DiffusionReactionResult, solve_diffusion_reaction, solve_diffusion_reaction_3d,
 };
 pub use fem::elasticity::{
-    DisplacementComponent, DisplacementConstraint, ElasticityError, ElasticityMaterial,
-    ElasticityModel, ElasticityProblem, ElasticityResult, NodalForce, solve_elasticity,
+    DisplacementComponent, DisplacementComponent3D, DisplacementConstraint,
+    DisplacementConstraint3D, ElasticityError, ElasticityMaterial, ElasticityMaterial3D,
+    ElasticityModel, ElasticityProblem, ElasticityProblem3D, ElasticityResult, ElasticityResult3D,
+    NodalForce, NodalForce3D, solve_elasticity, solve_elasticity_3d,
 };
 pub use fem::electrostatics::{
     ElectricPotentialResult, ElectrostaticProblem, ElectrostaticProblem3D, solve_electrostatics,
