@@ -14,6 +14,10 @@ pub use condition::{
     Condition, ConditionError, ConditionId, ConditionKind, ConditionSet, ConditionSignature,
     ResolvedCondition, ResolvedConditionSet,
 };
+pub use fem::diffusion_reaction::{
+    DiffusionReactionError, DiffusionReactionProblem, DiffusionReactionProblem3D,
+    DiffusionReactionResult, solve_diffusion_reaction, solve_diffusion_reaction_3d,
+};
 pub use fem::elasticity::{
     DisplacementComponent, DisplacementConstraint, ElasticityError, ElasticityMaterial,
     ElasticityModel, ElasticityProblem, ElasticityResult, NodalForce, solve_elasticity,

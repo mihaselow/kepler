@@ -28,6 +28,7 @@ The implementation supports first-order triangular elements (`Tri3`) over a 2D m
 - REST solves through the separate `server` binary.
 - 2D linear elasticity on `Tri3` meshes with displacement constraints and nodal forces.
 - Steady heat transfer API wrappers over the scalar Poisson solver for 2D `Tri3` and 3D `Tet4` problems.
+- Diffusion-reaction solves for 2D `Tri3` and 3D `Tet4` problems with constant diffusivity and reaction rate.
 
 The solver does not yet support assembled Neumann boundaries, spatially varying conductivity, preconditioning, `Quad4`/`Hex8` assembly, higher-order elements, or 3D elasticity. The file-driven CLI and REST endpoint still expose the original 2D `Tri3` Poisson solve path.
 
@@ -137,6 +138,40 @@ let result = solve_steady_heat_3d(&topology, &problem, SolverOptions::default())
 ```
 
 `TemperatureResult::temperatures` contains one nodal temperature per mesh node. Heat transfer currently supports constant thermal conductivity, centroid heat generation, and prescribed nodal temperatures. It does not yet assemble convection, heat flux, radiation, or region-targeted thermal conditions.
+
+## Diffusion-Reaction
+
+The diffusion-reaction module solves:
+
+```text
+-div(D grad u) + r u = f
+```
+
+For 2D `Tri3` meshes:
+
+```rust
+let problem = DiffusionReactionProblem {
+    diffusivity: 1.0,
+    reaction_rate: 0.5,
+    source: |x, y| 1.0,
+    dirichlet: vec![(0, 0.0), (1, 0.0)],
+};
+let result = solve_diffusion_reaction(&mesh, &problem, SolverOptions::default())?;
+```
+
+For 3D `Tet4` topologies:
+
+```rust
+let problem = DiffusionReactionProblem3D {
+    diffusivity: 1.0,
+    reaction_rate: 0.5,
+    source: |x, y, z| 1.0,
+    dirichlet: vec![(1, 0.0), (2, 0.0), (3, 0.0)],
+};
+let result = solve_diffusion_reaction_3d(&topology, &problem, SolverOptions::default())?;
+```
+
+Diffusion-reaction uses the existing scalar stiffness and load assembly plus a consistent reaction matrix. The reaction rate must be finite and non-negative. The module currently supports constant coefficients and nodal Dirichlet constraints; it does not yet consume `ConditionSet` or region-targeted material fields.
 
 ## Mesh Core
 
