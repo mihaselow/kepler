@@ -19,6 +19,7 @@ The implementation uses first-order triangular elements (`Tri3`) over a 2D mesh.
 - Solver diagnostics with iteration count and residual norm.
 - File-driven solves from `.mesh` and `.params` inputs.
 - `.solution` output with nodal values and diagnostics.
+- REST solves through the separate `server` binary.
 
 The solver does not yet support Neumann boundaries, spatially varying conductivity, preconditioning, or higher-order elements.
 

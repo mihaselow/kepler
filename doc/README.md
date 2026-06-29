@@ -5,6 +5,7 @@ This directory documents the solver functionality implemented in the crate.
 ## Current Topics
 
 - [Minimal FEM Solver](fem-poisson.md): 2D scalar Poisson/steady heat diffusion with P1 triangular elements.
+- [REST API](rest-api.md): HTTP endpoints for running solver jobs from JSON payloads.
 
 ## Keeping Documentation Current
 
