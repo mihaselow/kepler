@@ -179,6 +179,8 @@ The default parameters are average acceleration (`gamma = 0.5`, `beta = 0.25`). 
 
 `solve_transient_elasticity` and `solve_transient_elasticity_3d` wire Newmark into the 2D `Tri3` and 3D `Tet4` elasticity modules. They reuse the existing stiffness assembly, add lumped structural mass, reduce constant displacement constraints, and reconstruct nodal states at every time step.
 
+Electrostatics is marked as `ElectrostaticFormulation::SteadyQuasiStatic`, so it intentionally has no physics-specific transient wrapper in this solver stack. A time-dependent electrostatic workflow should run repeated quasi-static solves for prescribed charge snapshots. Charge relaxation or electromagnetic propagation would require a different physics formulation rather than another use of the current first-order or Newmark integrators.
+
 ## Current Limits
 
-The direct backend is intentionally dense and intended for small systems, verification fixtures, and as a future hook point for external sparse direct solvers. Nonlinear solves are still generic linalg-level primitives. Transient physics coverage currently includes heat transfer, diffusion-reaction, and structural dynamics; electrostatics remains steady/quasi-static unless a charge-relaxation or electromagnetic formulation is added.
+The direct backend is intentionally dense and intended for small systems, verification fixtures, and as a future hook point for external sparse direct solvers. Nonlinear solves are still generic linalg-level primitives. Transient physics coverage currently includes heat transfer, diffusion-reaction, and structural dynamics; electrostatics is deliberately steady/quasi-static unless a charge-relaxation or electromagnetic formulation is added.

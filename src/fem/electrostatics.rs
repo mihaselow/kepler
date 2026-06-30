@@ -19,6 +19,14 @@ pub struct ElectrostaticProblem3D<F> {
     pub prescribed_potentials: Vec<(NodeId, f64)>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ElectrostaticFormulation {
+    SteadyQuasiStatic,
+}
+
+pub const ELECTROSTATIC_FORMULATION: ElectrostaticFormulation =
+    ElectrostaticFormulation::SteadyQuasiStatic;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ElectricPotentialResult {
     pub potentials: Vec<f64>,

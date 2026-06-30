@@ -323,6 +323,8 @@ let result = solve_electrostatics_3d(&topology, &problem, SolverOptions::default
 
 `ElectricPotentialResult::potentials` contains one nodal electric potential per mesh node. Electrostatics currently supports constant permittivity, centroid charge density, and prescribed nodal potentials. It does not yet compute electric field recovery, capacitance, dielectric interfaces, or region-targeted charge/permittivity fields.
 
+Electrostatics is explicitly modeled as `ElectrostaticFormulation::SteadyQuasiStatic`. There is no separate transient electrostatics wrapper because the current governing equation has no storage, inertia, or damping term to integrate in time. Time-varying charge densities can be handled as a sequence of quasi-static solves; true charge relaxation or electromagnetic wave propagation should be added later as a separate physics formulation with its own material parameters and time integrator.
+
 ## Mesh Core
 
 The current Poisson API keeps the original ergonomic 2D types:

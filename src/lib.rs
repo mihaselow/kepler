@@ -33,9 +33,9 @@ pub use fem::elasticity::{
     solve_elasticity_with_solver, solve_transient_elasticity, solve_transient_elasticity_3d,
 };
 pub use fem::electrostatics::{
-    ElectricPotentialResult, ElectricPotentialSolverResult, ElectrostaticProblem,
-    ElectrostaticProblem3D, solve_electrostatics, solve_electrostatics_3d,
-    solve_electrostatics_3d_with_solver, solve_electrostatics_with_solver,
+    ELECTROSTATIC_FORMULATION, ElectricPotentialResult, ElectricPotentialSolverResult,
+    ElectrostaticFormulation, ElectrostaticProblem, ElectrostaticProblem3D, solve_electrostatics,
+    solve_electrostatics_3d, solve_electrostatics_3d_with_solver, solve_electrostatics_with_solver,
 };
 pub use fem::heat::{
     SteadyHeatProblem, SteadyHeatProblem3D, TemperatureResult, TemperatureSolverResult,

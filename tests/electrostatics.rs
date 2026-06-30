@@ -1,6 +1,7 @@
 use kepler::{
-    Cell, ElectrostaticProblem, ElectrostaticProblem3D, ElementKind, Mesh, MeshTopology, Point2,
-    PointD, SolverOptions, Tri3, solve_electrostatics, solve_electrostatics_3d,
+    Cell, ELECTROSTATIC_FORMULATION, ElectrostaticFormulation, ElectrostaticProblem,
+    ElectrostaticProblem3D, ElementKind, Mesh, MeshTopology, Point2, PointD, SolverOptions, Tri3,
+    solve_electrostatics, solve_electrostatics_3d,
 };
 
 const EPS: f64 = 1.0e-12;
@@ -54,6 +55,14 @@ fn electrostatics_propagates_invalid_permittivity_errors() {
         error,
         kepler::fem::poisson::PoissonError::InvalidConductivity(-1.0)
     ));
+}
+
+#[test]
+fn electrostatics_declares_steady_quasi_static_formulation() {
+    assert_eq!(
+        ELECTROSTATIC_FORMULATION,
+        ElectrostaticFormulation::SteadyQuasiStatic
+    );
 }
 
 fn square_with_center_mesh() -> Mesh {
