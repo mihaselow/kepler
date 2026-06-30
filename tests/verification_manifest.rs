@@ -18,6 +18,7 @@ const REQUIRED_TESTS: &[&str] = &[
     "tests/heat.rs",
     "tests/diffusion_reaction.rs",
     "tests/electrostatics.rs",
+    "tests/manufactured_scalar.rs",
     "tests/elasticity.rs",
     "tests/elasticity_3d.rs",
     "tests/modal.rs",

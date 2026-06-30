@@ -30,6 +30,7 @@ Physics verification tests:
 - `tests/heat.rs`
 - `tests/diffusion_reaction.rs`
 - `tests/electrostatics.rs`
+- `tests/manufactured_scalar.rs`
 - `tests/elasticity.rs`
 - `tests/elasticity_3d.rs`
 - `tests/modal.rs`
@@ -61,6 +62,7 @@ These fixtures cover the legacy mesh/params path and the v1 project workflow pat
 
 ## Current Coverage Map
 
+- Scalar manufactured solutions: 2D/3D Poisson, steady heat, diffusion-reaction, and electrostatics.
 - Poisson: 2D `Tri3`, 3D `Tet4`, Dirichlet handling, local stiffness/load references, CG non-convergence.
 - Heat: steady 2D/3D and transient 2D theta integration.
 - Diffusion-reaction: 2D/3D reaction matrices and transient 2D/3D theta integration.
@@ -73,7 +75,7 @@ These fixtures cover the legacy mesh/params path and the v1 project workflow pat
 
 ## Known Gaps
 
-- Manufactured-solution suites are not yet complete for every physics/dimension pair.
+- Manufactured-solution suites are not yet complete for structural and modal physics.
 - Benchmarks are not yet implemented.
 - CAD import workflow fixtures are not yet present.
 - REST project jobs and artifacts are in-memory only.
