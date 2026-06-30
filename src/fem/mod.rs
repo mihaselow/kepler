@@ -7,6 +7,7 @@ pub mod electrostatics;
 pub mod element;
 pub mod heat;
 pub mod modal;
+pub mod nonlinear;
 pub mod poisson;
 pub mod quadratic;
 pub mod quadrature;

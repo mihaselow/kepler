@@ -51,6 +51,7 @@ pub use fem::modal::{
     ModalError, ModalProblem, ModalProblem3D, ModalResult, ModalResult3D, ModeShape, ModeShape3D,
     solve_modal, solve_modal_3d,
 };
+pub use fem::nonlinear::{NonlinearTrussAssembly, NonlinearTrussElement};
 pub use fem::poisson::{
     PoissonProblem, PoissonProblem3D, PoissonResult, PoissonSolverResult, solve_poisson,
     solve_poisson_3d, solve_poisson_3d_with_solver, solve_poisson_with_solver,
