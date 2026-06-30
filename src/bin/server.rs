@@ -21,7 +21,8 @@ use serde::{Deserialize, Serialize};
 use kepler::{
     LinearSolverBackend, LinearSolverOptions, Mesh, Point2, PoissonProblem, PreconditionerKind,
     ProjectFile, ProjectPhysics, SolverDiagnostics, SolverOptions, Tri3, job_to_poisson,
-    solve_poisson_with_solver, validate_project,
+    parse_mesh_str, parse_params_str, parse_project_str, solve_poisson_with_solver,
+    validate_project,
 };
 
 #[tokio::main]
@@ -65,6 +66,11 @@ fn app_with_state(state: AppState) -> Router {
         .route(
             "/projects/jobs/{job_id}/result",
             get(project_job_result_endpoint),
+        )
+        .route("/projects/artifacts", post(upload_artifact_endpoint))
+        .route(
+            "/projects/artifacts/{artifact_id}",
+            get(download_artifact_endpoint),
         )
         .with_state(state)
 }
@@ -200,6 +206,40 @@ async fn project_job_result_endpoint(
     )))
 }
 
+async fn upload_artifact_endpoint(
+    State(state): State<AppState>,
+    Json(request): Json<ArtifactUploadRequest>,
+) -> Result<Json<ArtifactUploadResponse>, ApiError> {
+    if request.name.trim().is_empty() {
+        return Err(ApiError::message(
+            "artifact name must not be empty".to_owned(),
+        ));
+    }
+    validate_artifact_content(request.kind, &request.content)?;
+    let artifact_id = state.next_artifact_id();
+    let record = ArtifactRecord {
+        kind: request.kind,
+        name: request.name,
+        content: request.content,
+    };
+    let response = ArtifactUploadResponse::from_record(&artifact_id, &record);
+    state.insert_artifact(&artifact_id, record);
+    Ok(Json(response))
+}
+
+async fn download_artifact_endpoint(
+    State(state): State<AppState>,
+    Path(artifact_id): Path<String>,
+) -> Result<Json<ArtifactDownloadResponse>, ApiError> {
+    let record = state
+        .artifact_snapshot(&artifact_id)
+        .ok_or_else(|| ApiError::not_found(format!("unknown artifact '{artifact_id}'")))?;
+    Ok(Json(ArtifactDownloadResponse::from_record(
+        artifact_id,
+        &record,
+    )))
+}
+
 fn parse_addr(args: impl IntoIterator<Item = String>) -> Result<SocketAddr, String> {
     let mut args = args.into_iter();
     let Some(first) = args.next() else {
@@ -237,13 +277,20 @@ fn usage() -> String {
 #[derive(Debug, Clone, Default)]
 struct AppState {
     jobs: Arc<Mutex<BTreeMap<String, AsyncProjectJobRecord>>>,
+    artifacts: Arc<Mutex<BTreeMap<String, ArtifactRecord>>>,
     next_job: Arc<AtomicU64>,
+    next_artifact: Arc<AtomicU64>,
 }
 
 impl AppState {
     fn next_job_id(&self) -> String {
         let id = self.next_job.fetch_add(1, Ordering::Relaxed) + 1;
         format!("project-job-{id}")
+    }
+
+    fn next_artifact_id(&self) -> String {
+        let id = self.next_artifact.fetch_add(1, Ordering::Relaxed) + 1;
+        format!("artifact-{id}")
     }
 
     fn insert_job(&self, job_id: &str, project: ProjectFile) {
@@ -266,6 +313,21 @@ impl AppState {
             .lock()
             .expect("job store mutex poisoned")
             .get(job_id)
+            .cloned()
+    }
+
+    fn insert_artifact(&self, artifact_id: &str, record: ArtifactRecord) {
+        self.artifacts
+            .lock()
+            .expect("artifact store mutex poisoned")
+            .insert(artifact_id.to_owned(), record);
+    }
+
+    fn artifact_snapshot(&self, artifact_id: &str) -> Option<ArtifactRecord> {
+        self.artifacts
+            .lock()
+            .expect("artifact store mutex poisoned")
+            .get(artifact_id)
             .cloned()
     }
 
@@ -359,6 +421,13 @@ struct AsyncProjectJobRecord {
     cancellation_requested: bool,
 }
 
+#[derive(Debug, Clone)]
+struct ArtifactRecord {
+    kind: ArtifactKind,
+    name: String,
+    content: String,
+}
+
 fn run_project_job(state: AppState, job_id: String, project: ProjectFile) {
     if !state.mark_running(&job_id) {
         return;
@@ -398,6 +467,32 @@ fn solve_project(project: &ProjectFile) -> Result<ProjectSolveResponse, ApiError
     })
 }
 
+fn validate_artifact_content(kind: ArtifactKind, content: &str) -> Result<(), ApiError> {
+    match kind {
+        ArtifactKind::Mesh => {
+            parse_mesh_str(content)?;
+        }
+        ArtifactKind::Params => {
+            parse_params_str(content)?;
+        }
+        ArtifactKind::Project => {
+            parse_project_str(content)?;
+        }
+        ArtifactKind::Solution => validate_solution_artifact(content)?,
+    }
+    Ok(())
+}
+
+fn validate_solution_artifact(content: &str) -> Result<(), ApiError> {
+    if content.lines().any(|line| line.trim() == "node value") {
+        Ok(())
+    } else {
+        Err(ApiError::message(
+            "solution artifact must contain a 'node value' header".to_owned(),
+        ))
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct HealthResponse {
     status: &'static str,
@@ -414,6 +509,33 @@ struct SolvePoissonRequest {
 #[derive(Debug, Deserialize)]
 struct ProjectEnvelopeRequest {
     project: ProjectFile,
+}
+
+#[derive(Debug, Deserialize)]
+struct ArtifactUploadRequest {
+    kind: ArtifactKind,
+    name: String,
+    content: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ArtifactKind {
+    Mesh,
+    Params,
+    Project,
+    Solution,
+}
+
+impl ArtifactKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Mesh => "mesh",
+            Self::Params => "params",
+            Self::Project => "project",
+            Self::Solution => "solution",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -598,6 +720,48 @@ struct AsyncProjectResultResponse {
     logs: Vec<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct ArtifactUploadResponse {
+    artifact_id: String,
+    kind: &'static str,
+    name: String,
+    size_bytes: usize,
+    download_url: String,
+}
+
+impl ArtifactUploadResponse {
+    fn from_record(artifact_id: &str, record: &ArtifactRecord) -> Self {
+        Self {
+            artifact_id: artifact_id.to_owned(),
+            kind: record.kind.as_str(),
+            name: record.name.clone(),
+            size_bytes: record.content.len(),
+            download_url: format!("/projects/artifacts/{artifact_id}"),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ArtifactDownloadResponse {
+    artifact_id: String,
+    kind: &'static str,
+    name: String,
+    content: String,
+    size_bytes: usize,
+}
+
+impl ArtifactDownloadResponse {
+    fn from_record(artifact_id: String, record: &ArtifactRecord) -> Self {
+        Self {
+            artifact_id,
+            kind: record.kind.as_str(),
+            name: record.name.clone(),
+            size_bytes: record.content.len(),
+            content: record.content.clone(),
+        }
+    }
+}
+
 impl AsyncProjectResultResponse {
     fn from_record(job_id: String, record: &AsyncProjectJobRecord) -> Self {
         Self {
@@ -691,6 +855,12 @@ impl From<kepler::fem::poisson::PoissonError> for ApiError {
 
 impl From<kepler::ProjectError> for ApiError {
     fn from(value: kepler::ProjectError) -> Self {
+        Self::bad_request(value)
+    }
+}
+
+impl From<kepler::FileIoError> for ApiError {
+    fn from(value: kepler::FileIoError) -> Self {
         Self::bad_request(value)
     }
 }
@@ -1049,6 +1219,142 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn artifact_upload_and_download_round_trip_mesh() {
+        let app = app();
+        let upload_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/projects/artifacts")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "kind": "mesh",
+                            "name": "triangle.mesh",
+                            "content": triangle_mesh_text()
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(upload_response.status(), StatusCode::OK);
+        let upload_body = body_json(upload_response).await;
+        let artifact_id = upload_body["artifact_id"].as_str().unwrap();
+        assert_eq!(upload_body["kind"], json!("mesh"));
+        assert!(
+            upload_body["download_url"]
+                .as_str()
+                .unwrap()
+                .contains(artifact_id)
+        );
+
+        let download_response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/projects/artifacts/{artifact_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(download_response.status(), StatusCode::OK);
+        let download_body = body_json(download_response).await;
+        assert_eq!(download_body["artifact_id"], json!(artifact_id));
+        assert_eq!(download_body["name"], json!("triangle.mesh"));
+        assert_eq!(download_body["content"], json!(triangle_mesh_text()));
+    }
+
+    #[tokio::test]
+    async fn artifact_upload_validates_params_project_and_solution() {
+        for (kind, name, content) in [
+            ("params", "triangle.params", params_text()),
+            (
+                "project",
+                "project.json",
+                project_request()["project"].to_string(),
+            ),
+            (
+                "solution",
+                "result.solution",
+                "# kepler solution\nnode value\n0 0\n".to_owned(),
+            ),
+        ] {
+            let response = app()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/projects/artifacts")
+                        .header("content-type", "application/json")
+                        .body(Body::from(
+                            json!({
+                                "kind": kind,
+                                "name": name,
+                                "content": content
+                            })
+                            .to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = body_json(response).await;
+            assert_eq!(body["kind"], json!(kind));
+            assert_eq!(body["name"], json!(name));
+        }
+    }
+
+    #[tokio::test]
+    async fn artifact_upload_rejects_invalid_mesh() {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/projects/artifacts")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "kind": "mesh",
+                            "name": "bad.mesh",
+                            "content": "nodes\n0 0.0 0.0\n"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = body_json(response).await;
+        assert_eq!(body["code"], json!("bad_request"));
+        assert!(body["error"].as_str().unwrap().contains("triangles"));
+    }
+
+    #[tokio::test]
+    async fn artifact_download_unknown_id_returns_not_found() {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .uri("/projects/artifacts/missing")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = body_json(response).await;
+        assert!(body["error"].as_str().unwrap().contains("unknown artifact"));
+    }
+
     async fn body_json(response: axum::response::Response) -> Value {
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         serde_json::from_slice(&body).unwrap()
@@ -1156,5 +1462,13 @@ mod tests {
                 ]
             }
         })
+    }
+
+    fn triangle_mesh_text() -> &'static str {
+        "nodes\n0 0.0 0.0\n1 1.0 0.0\n2 0.0 1.0\n\ntriangles\n0 0 1 2\n"
+    }
+
+    fn params_text() -> String {
+        "conductivity 1.0\nsource constant 1.0\n\ndirichlet\n0 0.0\n".to_owned()
     }
 }

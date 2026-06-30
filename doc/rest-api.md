@@ -257,6 +257,53 @@ Returns the current result envelope. Pending jobs return `result: null`; complet
 }
 ```
 
+### `POST /projects/artifacts`
+
+Uploads a text artifact into the in-memory workflow store. This endpoint is JSON-based rather than multipart for now:
+
+```json
+{
+  "kind": "mesh",
+  "name": "square.mesh",
+  "content": "nodes\n0 0.0 0.0\n1 1.0 0.0\n2 0.0 1.0\n\ntriangles\n0 0 1 2\n"
+}
+```
+
+Supported `kind` values are:
+
+- `mesh`: validated with the legacy `.mesh` parser.
+- `params`: validated with the legacy `.params` parser.
+- `project`: validated as a v1 project JSON document.
+- `solution`: validated as a text solution artifact containing a `node value` header.
+
+Response:
+
+```json
+{
+  "artifact_id": "artifact-1",
+  "kind": "mesh",
+  "name": "square.mesh",
+  "size_bytes": 68,
+  "download_url": "/projects/artifacts/artifact-1"
+}
+```
+
+### `GET /projects/artifacts/{artifact_id}`
+
+Downloads a previously uploaded in-memory artifact:
+
+```json
+{
+  "artifact_id": "artifact-1",
+  "kind": "mesh",
+  "name": "square.mesh",
+  "content": "nodes\n...",
+  "size_bytes": 68
+}
+```
+
+Artifacts are stored in memory only. They are intended as the first upload/download abstraction for workflow APIs; durable storage, multipart uploads, artifact references from project jobs, and binary result bundles are future work.
+
 ## Curl Example
 
 ```shell
@@ -293,4 +340,4 @@ curl -s http://127.0.0.1:3000/solve/poisson \
 
 ## Current Scope
 
-The REST API still focuses on small 2D Poisson solves. `/solve/poisson` preserves the original direct endpoint, while `/projects/validate`, `/projects/solve`, and `/projects/jobs` introduce versioned project envelopes for the same supported physics. The library also has dimension-aware topology, geometry annotation, shared condition, Gmsh import, VTK export, 3D `Tet4` Poisson, 2D/3D linear elasticity, steady heat transfer, diffusion-reaction, electrostatics, modal-analysis primitives, and a richer linalg solver stack, but the REST project endpoints do not yet accept generic `ElementKind` payloads, named-region material assignments, arbitrary parameter assignments, general `ConditionSet` payloads, Gmsh uploads, VTK downloads, 3D meshes, heat problems, diffusion-reaction problems, electrostatics problems, elasticity problems, modal problems, nonlinear solves, or transient solves. Async jobs are stored in memory only; they are lost when the server exits and do not yet support durable persistence, worker pools, authentication, uploaded mesh files, or result artifact downloads.
+The REST API still focuses on small 2D Poisson solves. `/solve/poisson` preserves the original direct endpoint, while `/projects/validate`, `/projects/solve`, `/projects/jobs`, and `/projects/artifacts` introduce versioned project envelopes and in-memory artifact handling for the same supported physics. The library also has dimension-aware topology, geometry annotation, shared condition, Gmsh import, VTK export, 3D `Tet4` Poisson, 2D/3D linear elasticity, steady heat transfer, diffusion-reaction, electrostatics, modal-analysis primitives, and a richer linalg solver stack, but the REST project endpoints do not yet accept generic `ElementKind` payloads, named-region material assignments, arbitrary parameter assignments, general `ConditionSet` payloads, Gmsh uploads, VTK downloads, 3D meshes, heat problems, diffusion-reaction problems, electrostatics problems, elasticity problems, modal problems, nonlinear solves, or transient solves. Async jobs and artifacts are stored in memory only; they are lost when the server exits and do not yet support durable persistence, worker pools, authentication, multipart uploads, artifact references from project jobs, or binary result bundles.
