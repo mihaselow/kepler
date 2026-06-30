@@ -1,4 +1,4 @@
-use std::{env, path::PathBuf, process};
+use std::{env, path::PathBuf, process, process::Command as ProcessCommand};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let command = match Command::parse(env::args().skip(1)) {
@@ -19,6 +19,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => solve_from_files(mesh_path, params_path, output_path)?,
         Command::ProjectValidate { project_path } => validate_project_file(project_path)?,
         Command::ProjectInspect { project_path } => inspect_project_file(project_path)?,
+        Command::CadPlan { workflow } => print_cad_plan(workflow)?,
+        Command::CadRun { workflow } => run_cad_plan(workflow)?,
     }
 
     Ok(())
@@ -36,6 +38,12 @@ enum Command {
     ProjectInspect {
         project_path: PathBuf,
     },
+    CadPlan {
+        workflow: kepler::CadMeshingWorkflow,
+    },
+    CadRun {
+        workflow: kepler::CadMeshingWorkflow,
+    },
 }
 
 impl Command {
@@ -44,9 +52,78 @@ impl Command {
         match args.next().as_deref() {
             Some("solve") => parse_solve_args(args),
             Some("project") => parse_project_args(args),
+            Some("cad") => parse_cad_args(args),
             Some("--help") | Some("-h") | None => Err(usage()),
             Some(command) => Err(format!("unknown command '{command}'")),
         }
+    }
+}
+
+fn parse_cad_args(mut args: impl Iterator<Item = String>) -> Result<Command, String> {
+    let action = args
+        .next()
+        .ok_or_else(|| "missing cad subcommand".to_owned())?;
+    let mut input_path = None;
+    let mut output_path = None;
+    let mut unit = kepler::CadLengthUnit::Millimeter;
+    let mut dimension = kepler::CadMeshingDimension::Volume3D;
+    let mut gmsh_executable = "gmsh".to_owned();
+    let mut max_element_size = None;
+    let mut element_order = None;
+    let mut optimize = false;
+
+    while let Some(flag) = args.next() {
+        match flag.as_str() {
+            "--input" => input_path = Some(PathBuf::from(required_value(&mut args, &flag)?)),
+            "--output" => output_path = Some(PathBuf::from(required_value(&mut args, &flag)?)),
+            "--unit" => unit = parse_cad_unit(&required_value(&mut args, &flag)?)?,
+            "--dimension" => dimension = parse_cad_dimension(&required_value(&mut args, &flag)?)?,
+            "--gmsh" => gmsh_executable = required_value(&mut args, &flag)?,
+            "--max-element-size" => {
+                let value = required_value(&mut args, &flag)?;
+                max_element_size = Some(
+                    value
+                        .parse::<f64>()
+                        .map_err(|_| format!("invalid value for --max-element-size '{value}'"))?,
+                );
+            }
+            "--element-order" => {
+                let value = required_value(&mut args, &flag)?;
+                element_order = Some(
+                    value
+                        .parse::<usize>()
+                        .map_err(|_| format!("invalid value for --element-order '{value}'"))?,
+                );
+            }
+            "--optimize" => optimize = true,
+            _ => return Err(format!("unknown cad option '{flag}'")),
+        }
+    }
+
+    let input_path = input_path.ok_or_else(|| "missing required option --input".to_owned())?;
+    let output_mesh = output_path.ok_or_else(|| "missing required option --output".to_owned())?;
+    let source =
+        kepler::CadSource::from_path(input_path, unit).map_err(|error| error.to_string())?;
+    let workflow = kepler::CadMeshingWorkflow {
+        source,
+        mesher: kepler::ExternalMesher::Gmsh {
+            executable: gmsh_executable,
+        },
+        options: kepler::CadMeshingOptions {
+            dimension,
+            max_element_size,
+            element_order,
+            optimize,
+            output_format: kepler::CadMeshOutputFormat::GmshMsh2,
+        },
+        output_mesh,
+    };
+    kepler::validate_cad_meshing_workflow(&workflow).map_err(|error| error.to_string())?;
+
+    match action.as_str() {
+        "plan" => Ok(Command::CadPlan { workflow }),
+        "run" => Ok(Command::CadRun { workflow }),
+        _ => Err(format!("unknown cad subcommand '{action}'")),
     }
 }
 
@@ -98,6 +175,27 @@ fn parse_solve_args(mut args: impl Iterator<Item = String>) -> Result<Command, S
         params_path: params_path.ok_or_else(|| "missing required option --params".to_owned())?,
         output_path: output_path.ok_or_else(|| "missing required option --output".to_owned())?,
     })
+}
+
+fn required_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, String> {
+    args.next()
+        .ok_or_else(|| format!("missing value for {flag}"))
+}
+
+fn parse_cad_unit(value: &str) -> Result<kepler::CadLengthUnit, String> {
+    match value {
+        "mm" | "millimeter" | "millimeters" => Ok(kepler::CadLengthUnit::Millimeter),
+        "m" | "meter" | "meters" => Ok(kepler::CadLengthUnit::Meter),
+        _ => Err(format!("unsupported CAD length unit '{value}'")),
+    }
+}
+
+fn parse_cad_dimension(value: &str) -> Result<kepler::CadMeshingDimension, String> {
+    match value {
+        "2" | "2d" | "surface" | "surface2d" => Ok(kepler::CadMeshingDimension::Surface2D),
+        "3" | "3d" | "volume" | "volume3d" => Ok(kepler::CadMeshingDimension::Volume3D),
+        _ => Err(format!("unsupported CAD meshing dimension '{value}'")),
+    }
 }
 
 fn solve_from_files(
@@ -179,6 +277,43 @@ fn inspect_project_file(project_path: PathBuf) -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
+fn print_cad_plan(workflow: kepler::CadMeshingWorkflow) -> Result<(), Box<dyn std::error::Error>> {
+    let command = kepler::plan_cad_meshing_command(&workflow)?;
+    println!("{}", format_external_command(&command));
+    Ok(())
+}
+
+fn run_cad_plan(workflow: kepler::CadMeshingWorkflow) -> Result<(), Box<dyn std::error::Error>> {
+    let command = kepler::plan_cad_meshing_command(&workflow)?;
+    println!("{}", format_external_command(&command));
+    let status = ProcessCommand::new(&command.program)
+        .args(&command.args)
+        .status()?;
+    if !status.success() {
+        return Err(format!("CAD mesher exited with status {status}").into());
+    }
+    Ok(())
+}
+
+fn format_external_command(command: &kepler::ExternalCommand) -> String {
+    std::iter::once(command.program.as_str())
+        .chain(command.args.iter().map(String::as_str))
+        .map(shell_quote)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn shell_quote(value: &str) -> String {
+    if value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | ':' | '='))
+    {
+        value.to_owned()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
 fn plural_suffix(count: usize) -> &'static str {
     if count == 1 { "" } else { "s" }
 }
@@ -189,6 +324,8 @@ fn usage() -> String {
         "  kepler solve --mesh <path.mesh> --params <path.params> --output <path.solution>",
         "  kepler project validate --project <path.project.json>",
         "  kepler project inspect --project <path.project.json>",
+        "  kepler cad plan --input <model.step> --output <mesh.msh> [--dimension 2|3] [--unit mm|m] [--gmsh <path>] [--max-element-size <h>] [--element-order <n>] [--optimize]",
+        "  kepler cad run --input <model.step> --output <mesh.msh> [--dimension 2|3] [--unit mm|m] [--gmsh <path>] [--max-element-size <h>] [--element-order <n>] [--optimize]",
     ]
     .join("\n")
 }

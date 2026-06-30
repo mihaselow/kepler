@@ -68,6 +68,7 @@ I/O and workflow tests:
 - `tests/file_io.rs`
 - `tests/mesh_import_export.rs`
 - `tests/cad_workflow.rs`
+- `tests/cli_cad.rs`
 - `tests/project_workflow.rs`
 - `tests/cli_project.rs`
 - `tests/benchmarks.rs`
@@ -103,7 +104,7 @@ These fixtures cover the legacy mesh/params path, the v1 project workflow path, 
 - Elasticity: 2D/3D stiffness symmetry, rigid translations, constrained solves, affine displacement constraints, transient Newmark dynamics.
 - Modal analysis: 2D/3D sorted modes, density validation, constrained model validation, one-DOF frequency references.
 - Solver stack: CG, GMRES, dense direct, Jacobi preconditioning, diagnostics, Newton, theta transient, Newmark transient.
-- Import/export: legacy mesh/params/solution, golden solution output, Gmsh physical groups, VTK scalar output, and external CAD-to-Gmsh command planning.
+- Import/export: legacy mesh/params/solution, golden solution output, Gmsh physical groups, VTK scalar output, external CAD-to-Gmsh command planning, and CLI CAD plan/run workflows.
 - Project workflows: v1 project parsing/validation, CLI validation/inspection golden output, REST validation/solve golden envelopes, async jobs, artifact upload/download fixtures, and stable error schemas.
 - Benchmarks: ignored benchmark-style tests cover Poisson assembly, Poisson solve, Gmsh import, VTK export, project parse/validate/adapt, and REST project validate/solve workflows.
 
