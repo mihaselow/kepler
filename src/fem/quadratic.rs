@@ -31,9 +31,9 @@ impl<'a> Element for PoissonTri6<'a> {
         node_coords: &[Point3],
         properties: &BTreeMap<String, f64>,
     ) -> Result<Vec<Vec<f64>>, ElementError> {
-        let conductivity = *properties.get("conductivity").ok_or_else(|| {
-            ElementError::MissingProperty("conductivity".to_string())
-        })?;
+        let conductivity = *properties
+            .get("conductivity")
+            .ok_or_else(|| ElementError::MissingProperty("conductivity".to_string()))?;
 
         if node_coords.len() != 6 {
             return Err(ElementError::InvalidNodeCount {
@@ -74,8 +74,8 @@ impl<'a> Element for PoissonTri6<'a> {
             let mut global_derivs = [[0.0; 2]; 6];
             for i in 0..6 {
                 for k in 0..2 {
-                    global_derivs[i][k] = inv_j[k][0] * local_derivs[i][0]
-                        + inv_j[k][1] * local_derivs[i][1];
+                    global_derivs[i][k] =
+                        inv_j[k][0] * local_derivs[i][0] + inv_j[k][1] * local_derivs[i][1];
                 }
             }
 
@@ -184,9 +184,9 @@ impl<'a> Element for PoissonTet10<'a> {
         node_coords: &[Point3],
         properties: &BTreeMap<String, f64>,
     ) -> Result<Vec<Vec<f64>>, ElementError> {
-        let conductivity = *properties.get("conductivity").ok_or_else(|| {
-            ElementError::MissingProperty("conductivity".to_string())
-        })?;
+        let conductivity = *properties
+            .get("conductivity")
+            .ok_or_else(|| ElementError::MissingProperty("conductivity".to_string()))?;
 
         if node_coords.len() != 10 {
             return Err(ElementError::InvalidNodeCount {
@@ -338,12 +338,12 @@ impl<'a> Element for ElasticityTri6<'a> {
         node_coords: &[Point3],
         properties: &BTreeMap<String, f64>,
     ) -> Result<Vec<Vec<f64>>, ElementError> {
-        let young_modulus = *properties.get("young_modulus").ok_or_else(|| {
-            ElementError::MissingProperty("young_modulus".to_string())
-        })?;
-        let poisson_ratio = *properties.get("poisson_ratio").ok_or_else(|| {
-            ElementError::MissingProperty("poisson_ratio".to_string())
-        })?;
+        let young_modulus = *properties
+            .get("young_modulus")
+            .ok_or_else(|| ElementError::MissingProperty("young_modulus".to_string()))?;
+        let poisson_ratio = *properties
+            .get("poisson_ratio")
+            .ok_or_else(|| ElementError::MissingProperty("poisson_ratio".to_string()))?;
         let thickness = *properties.get("thickness").unwrap_or(&1.0);
         let model_val = *properties.get("model").unwrap_or(&0.0);
 
@@ -402,8 +402,8 @@ impl<'a> Element for ElasticityTri6<'a> {
             let mut global_derivs = [[0.0; 2]; 6];
             for i in 0..6 {
                 for k in 0..2 {
-                    global_derivs[i][k] = inv_j[k][0] * local_derivs[i][0]
-                        + inv_j[k][1] * local_derivs[i][1];
+                    global_derivs[i][k] =
+                        inv_j[k][0] * local_derivs[i][0] + inv_j[k][1] * local_derivs[i][1];
                 }
             }
 
@@ -531,12 +531,12 @@ impl<'a> Element for ElasticityTet10<'a> {
         node_coords: &[Point3],
         properties: &BTreeMap<String, f64>,
     ) -> Result<Vec<Vec<f64>>, ElementError> {
-        let young_modulus = *properties.get("young_modulus").ok_or_else(|| {
-            ElementError::MissingProperty("young_modulus".to_string())
-        })?;
-        let poisson_ratio = *properties.get("poisson_ratio").ok_or_else(|| {
-            ElementError::MissingProperty("poisson_ratio".to_string())
-        })?;
+        let young_modulus = *properties
+            .get("young_modulus")
+            .ok_or_else(|| ElementError::MissingProperty("young_modulus".to_string()))?;
+        let poisson_ratio = *properties
+            .get("poisson_ratio")
+            .ok_or_else(|| ElementError::MissingProperty("poisson_ratio".to_string()))?;
 
         if node_coords.len() != 10 {
             return Err(ElementError::InvalidNodeCount {
@@ -546,7 +546,8 @@ impl<'a> Element for ElasticityTet10<'a> {
         }
 
         let mu = young_modulus / (2.0 * (1.0 + poisson_ratio));
-        let lambda = (young_modulus * poisson_ratio) / ((1.0 + poisson_ratio) * (1.0 - 2.0 * poisson_ratio));
+        let lambda =
+            (young_modulus * poisson_ratio) / ((1.0 + poisson_ratio) * (1.0 - 2.0 * poisson_ratio));
 
         let d = [
             [lambda + 2.0 * mu, lambda, lambda, 0.0, 0.0, 0.0],

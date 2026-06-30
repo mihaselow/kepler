@@ -244,7 +244,7 @@ fn lumped_mass_3d(mesh: &MeshTopology<3>, density: f64) -> Vec<f64> {
     mass
 }
 
-fn jacobi_eigen_symmetric(mut matrix: Vec<Vec<f64>>) -> Vec<(f64, Vec<f64>)> {
+pub(crate) fn jacobi_eigen_symmetric(mut matrix: Vec<Vec<f64>>) -> Vec<(f64, Vec<f64>)> {
     let n = matrix.len();
     let mut vectors = identity(n);
     if n == 1 {

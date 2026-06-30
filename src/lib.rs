@@ -14,6 +14,7 @@ pub use condition::{
     Condition, ConditionError, ConditionId, ConditionKind, ConditionSet, ConditionSignature,
     ResolvedCondition, ResolvedConditionSet,
 };
+pub use fem::cms::{CraigBamptonReduction, reduce_craig_bampton};
 pub use fem::constraint::{
     MPCConstraint, MPCTerm, apply_mpc_lagrange, apply_mpc_penalty, split_lagrange_solution,
 };
