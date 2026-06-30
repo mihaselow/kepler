@@ -17,6 +17,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             params_path,
             output_path,
         } => solve_from_files(mesh_path, params_path, output_path)?,
+        Command::ProjectValidate { project_path } => validate_project_file(project_path)?,
+        Command::ProjectInspect { project_path } => inspect_project_file(project_path)?,
     }
 
     Ok(())
@@ -28,6 +30,12 @@ enum Command {
         params_path: PathBuf,
         output_path: PathBuf,
     },
+    ProjectValidate {
+        project_path: PathBuf,
+    },
+    ProjectInspect {
+        project_path: PathBuf,
+    },
 }
 
 impl Command {
@@ -35,9 +43,35 @@ impl Command {
         let mut args = args.into_iter();
         match args.next().as_deref() {
             Some("solve") => parse_solve_args(args),
+            Some("project") => parse_project_args(args),
             Some("--help") | Some("-h") | None => Err(usage()),
             Some(command) => Err(format!("unknown command '{command}'")),
         }
+    }
+}
+
+fn parse_project_args(mut args: impl Iterator<Item = String>) -> Result<Command, String> {
+    let action = args
+        .next()
+        .ok_or_else(|| "missing project subcommand".to_owned())?;
+    let mut project_path = None;
+
+    while let Some(flag) = args.next() {
+        let value = args
+            .next()
+            .ok_or_else(|| format!("missing value for {flag}"))?;
+        match flag.as_str() {
+            "--project" => project_path = Some(PathBuf::from(value)),
+            _ => return Err(format!("unknown project option '{flag}'")),
+        }
+    }
+
+    let project_path =
+        project_path.ok_or_else(|| "missing required option --project".to_owned())?;
+    match action.as_str() {
+        "validate" => Ok(Command::ProjectValidate { project_path }),
+        "inspect" => Ok(Command::ProjectInspect { project_path }),
+        _ => Err(format!("unknown project subcommand '{action}'")),
     }
 }
 
@@ -108,7 +142,53 @@ fn solve_from_files(
     Ok(())
 }
 
+fn validate_project_file(project_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let project = kepler::read_project_file(&project_path)?;
+    kepler::validate_project(&project)?;
+    println!(
+        "project {} is valid (schema_version {}, {} job{})",
+        project_path.display(),
+        project.schema_version,
+        project.jobs.len(),
+        plural_suffix(project.jobs.len()),
+    );
+    Ok(())
+}
+
+fn inspect_project_file(project_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let project = kepler::read_project_file(&project_path)?;
+    kepler::validate_project(&project)?;
+    println!("project: {}", project_path.display());
+    if let Some(name) = &project.name {
+        println!("name: {name}");
+    }
+    println!("schema_version: {}", project.schema_version);
+    println!("jobs: {}", project.jobs.len());
+    for job in &project.jobs {
+        let physics = match &job.physics {
+            kepler::ProjectPhysics::Poisson(_) => "poisson",
+        };
+        println!(
+            "- {}: physics={}, points={}, triangles={}",
+            job.id,
+            physics,
+            job.mesh.points.len(),
+            job.mesh.triangles.len()
+        );
+    }
+    Ok(())
+}
+
+fn plural_suffix(count: usize) -> &'static str {
+    if count == 1 { "" } else { "s" }
+}
+
 fn usage() -> String {
-    "usage: kepler solve --mesh <path.mesh> --params <path.params> --output <path.solution>"
-        .to_owned()
+    [
+        "usage:",
+        "  kepler solve --mesh <path.mesh> --params <path.params> --output <path.solution>",
+        "  kepler project validate --project <path.project.json>",
+        "  kepler project inspect --project <path.project.json>",
+    ]
+    .join("\n")
 }

@@ -59,6 +59,28 @@ The current model supports:
 
 `parse_project_str`, `read_project_file`, `validate_project`, and `validate_job` provide shared schema parsing and validation for future CLI and REST entry points.
 
+## CLI Commands
+
+The existing legacy solve path remains available:
+
+```shell
+kepler solve --mesh square.mesh --params square.params --output square.solution
+```
+
+Project files can be validated without running a solve:
+
+```shell
+kepler project validate --project square.project.json
+```
+
+They can also be inspected for a compact summary:
+
+```shell
+kepler project inspect --project square.project.json
+```
+
+`inspect` prints the schema version, job count, project name when present, and one line per job with physics kind and mesh size. These commands currently validate v1 synchronous Poisson projects and intentionally do not replace the legacy file-driven solve command.
+
 ## Validation Rules
 
 Project validation currently checks:
@@ -69,4 +91,4 @@ Project validation currently checks:
 - Mesh validity through the existing `Mesh` validator.
 - Poisson boundary references through existing parameter validation.
 
-Future workflow sub-steps will add CLI inspection/validation commands, REST project submission envelopes, asynchronous job state, upload/download-oriented artifact handling, and broader physics/job coverage.
+Future workflow sub-steps will add REST project submission envelopes, asynchronous job state, upload/download-oriented artifact handling, and broader physics/job coverage.
