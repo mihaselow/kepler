@@ -878,6 +878,7 @@ mod tests {
         http::{Request, StatusCode},
     };
     use serde_json::{Value, json};
+    use std::time::{Duration, Instant};
     use tower::ServiceExt;
 
     use super::*;
@@ -1039,6 +1040,52 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let body = body_json(response).await;
         assert_eq!(body, expected_project_solve_response());
+    }
+
+    #[tokio::test]
+    #[ignore = "benchmark-style verification; run with `cargo test --bin server -- --ignored --nocapture`"]
+    async fn benchmark_rest_project_validate_and_solve_workflow() {
+        let app = app();
+        let iterations = 25;
+        let start = Instant::now();
+
+        for _ in 0..iterations {
+            let validate_response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/projects/validate")
+                        .header("content-type", "application/json")
+                        .body(Body::from(project_request().to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(validate_response.status(), StatusCode::OK);
+
+            let solve_response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/projects/solve")
+                        .header("content-type", "application/json")
+                        .body(Body::from(project_request().to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(solve_response.status(), StatusCode::OK);
+            assert_eq!(
+                body_json(solve_response).await,
+                expected_project_solve_response()
+            );
+        }
+
+        let elapsed = start.elapsed();
+        eprintln!("rest project validate plus solve: {iterations} iterations in {elapsed:?}");
+        assert!(elapsed > Duration::ZERO);
     }
 
     #[tokio::test]

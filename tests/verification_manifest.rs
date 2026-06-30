@@ -30,6 +30,7 @@ const REQUIRED_TESTS: &[&str] = &[
     "tests/mesh_import_export.rs",
     "tests/project_workflow.rs",
     "tests/cli_project.rs",
+    "tests/benchmarks.rs",
     "tests/verification_manifest.rs",
     "src/bin/server.rs",
 ];
