@@ -1109,6 +1109,521 @@ impl<'a> Element for ShellTri3<'a> {
                 }
             }
         }
+        Ok(mass)
+    }
+}
+
+pub struct ShellQuad4<'a> {
+    pub nodes: &'a [NodeId; 4],
+    pub thickness: f64,
+}
+
+impl<'a> Element for ShellQuad4<'a> {
+    fn spatial_dimension(&self) -> usize {
+        3
+    }
+
+    fn node_count(&self) -> usize {
+        4
+    }
+
+    fn nodes(&self) -> &[NodeId] {
+        self.nodes
+    }
+
+    fn active_fields(&self) -> Vec<String> {
+        vec![
+            "ux".to_string(),
+            "uy".to_string(),
+            "uz".to_string(),
+            "theta_x".to_string(),
+            "theta_y".to_string(),
+            "theta_z".to_string(),
+        ]
+    }
+
+    fn local_stiffness(
+        &self,
+        node_coords: &[Point3],
+        properties: &BTreeMap<String, f64>,
+    ) -> Result<Vec<Vec<f64>>, ElementError> {
+        let young_modulus = *properties
+            .get("young_modulus")
+            .ok_or_else(|| ElementError::MissingProperty("young_modulus".to_string()))?;
+        let poisson_ratio = *properties
+            .get("poisson_ratio")
+            .ok_or_else(|| ElementError::MissingProperty("poisson_ratio".to_string()))?;
+
+        if node_coords.len() != 4 {
+            return Err(ElementError::InvalidNodeCount {
+                expected: 4,
+                actual: node_coords.len(),
+            });
+        }
+
+        let p0 = node_coords[0].coords;
+        let p1 = node_coords[1].coords;
+        let p2 = node_coords[2].coords;
+        let p3 = node_coords[3].coords;
+
+        // e1 connects midpoint of 0-3 and midpoint of 1-2
+        let mid12 = [0.5 * (p1[0] + p2[0]), 0.5 * (p1[1] + p2[1]), 0.5 * (p1[2] + p2[2])];
+        let mid03 = [0.5 * (p0[0] + p3[0]), 0.5 * (p0[1] + p3[1]), 0.5 * (p0[2] + p3[2])];
+        let v1 = [mid12[0] - mid03[0], mid12[1] - mid03[1], mid12[2] - mid03[2]];
+        let len_v1 = (v1[0].powi(2) + v1[1].powi(2) + v1[2].powi(2)).sqrt();
+        if len_v1 <= f64::EPSILON {
+            return Err(ElementError::DegenerateGeometry);
+        }
+        let e1 = [v1[0] / len_v1, v1[1] / len_v1, v1[2] / len_v1];
+
+        // Normal from diagonals: d13 x d24
+        let d13 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+        let d24 = [p3[0] - p1[0], p3[1] - p1[1], p3[2] - p1[2]];
+        let vn = [
+            d13[1] * d24[2] - d13[2] * d24[1],
+            d13[2] * d24[0] - d13[0] * d24[2],
+            d13[0] * d24[1] - d13[1] * d24[0],
+        ];
+        let len_vn = (vn[0].powi(2) + vn[1].powi(2) + vn[2].powi(2)).sqrt();
+        if len_vn <= f64::EPSILON {
+            return Err(ElementError::DegenerateGeometry);
+        }
+        let e3 = [vn[0] / len_vn, vn[1] / len_vn, vn[2] / len_vn];
+        let e2 = [
+            e3[1] * e1[2] - e3[2] * e1[1],
+            e3[2] * e1[0] - e3[0] * e1[2],
+            e3[0] * e1[1] - e3[1] * e1[0],
+        ];
+
+        // Local coordinates
+        let mut x = [0.0; 4];
+        let mut y = [0.0; 4];
+        for i in 0..4 {
+            let dx = node_coords[i].coords[0] - p0[0];
+            let dy = node_coords[i].coords[1] - p0[1];
+            let dz = node_coords[i].coords[2] - p0[2];
+            x[i] = dx * e1[0] + dy * e1[1] + dz * e1[2];
+            y[i] = dx * e2[0] + dy * e2[1] + dz * e2[2];
+        }
+
+        let area = 0.5 * ((x[2] - x[0]) * (y[3] - y[1]) - (x[3] - x[1]) * (y[2] - y[0])).abs();
+        if area <= f64::EPSILON {
+            return Err(ElementError::DegenerateGeometry);
+        }
+
+        let shear_modulus = young_modulus / (2.0 * (1.0 + poisson_ratio));
+
+        // Midpoint difference terms for tying point coordinates
+        let dx_10 = x[1] - x[0]; let dy_10 = y[1] - y[0];
+        let dx_21 = x[2] - x[1]; let dy_21 = y[2] - y[1];
+        let dx_32 = x[3] - x[2]; let dy_32 = y[3] - y[2];
+        let dx_03 = x[0] - x[3]; let dy_03 = y[0] - y[3];
+
+        let gp = [-1.0 / 3.0f64.sqrt(), 1.0 / 3.0f64.sqrt()];
+        let mut k_membrane = vec![vec![0.0; 8]; 8];
+        let mut k_bending = vec![vec![0.0; 12]; 12];
+
+        let dm_factor = young_modulus * self.thickness / (1.0 - poisson_ratio.powi(2));
+        let dm = [
+            [dm_factor, dm_factor * poisson_ratio, 0.0],
+            [dm_factor * poisson_ratio, dm_factor, 0.0],
+            [0.0, 0.0, dm_factor * 0.5 * (1.0 - poisson_ratio)],
+        ];
+
+        let db_factor = young_modulus * self.thickness.powi(3) / (12.0 * (1.0 - poisson_ratio.powi(2)));
+        let db = [
+            [db_factor, db_factor * poisson_ratio, 0.0],
+            [db_factor * poisson_ratio, db_factor, 0.0],
+            [0.0, 0.0, db_factor * 0.5 * (1.0 - poisson_ratio)],
+        ];
+
+        let ds = shear_modulus * self.thickness * (5.0 / 6.0);
+
+        for &xi in &gp {
+            for &eta in &gp {
+                let _n_val = [
+                    0.25 * (1.0 - xi) * (1.0 - eta),
+                    0.25 * (1.0 + xi) * (1.0 - eta),
+                    0.25 * (1.0 + xi) * (1.0 + eta),
+                    0.25 * (1.0 - xi) * (1.0 + eta),
+                ];
+                let d_n_dxi = [
+                    -0.25 * (1.0 - eta),
+                     0.25 * (1.0 - eta),
+                     0.25 * (1.0 + eta),
+                    -0.25 * (1.0 + eta),
+                ];
+                let d_n_deta = [
+                    -0.25 * (1.0 - xi),
+                    -0.25 * (1.0 + xi),
+                     0.25 * (1.0 + xi),
+                     0.25 * (1.0 - xi),
+                ];
+
+                let mut dx_dxi = 0.0; let mut dy_dxi = 0.0;
+                let mut dx_deta = 0.0; let mut dy_deta = 0.0;
+                for i in 0..4 {
+                    dx_dxi += d_n_dxi[i] * x[i];
+                    dy_dxi += d_n_dxi[i] * y[i];
+                    dx_deta += d_n_deta[i] * x[i];
+                    dy_deta += d_n_deta[i] * y[i];
+                }
+                let detj = dx_dxi * dy_deta - dy_dxi * dx_deta;
+                let detj_abs = detj.abs();
+                if detj_abs <= f64::EPSILON {
+                    return Err(ElementError::DegenerateGeometry);
+                }
+
+                let inv_j = [
+                    [ dy_deta / detj, -dy_dxi / detj],
+                    [-dx_deta / detj,  dx_dxi / detj],
+                ];
+
+                let mut nx = [0.0; 4];
+                let mut ny = [0.0; 4];
+                for i in 0..4 {
+                    nx[i] = inv_j[0][0] * d_n_dxi[i] + inv_j[0][1] * d_n_deta[i];
+                    ny[i] = inv_j[1][0] * d_n_dxi[i] + inv_j[1][1] * d_n_deta[i];
+                }
+
+                // --- 1. Membrane ---
+                let mut bm = [[0.0; 8]; 3];
+                for i in 0..4 {
+                    bm[0][2 * i] = nx[i];
+                    bm[1][2 * i + 1] = ny[i];
+                    bm[2][2 * i] = ny[i];
+                    bm[2][2 * i + 1] = nx[i];
+                }
+
+                let d_w = detj_abs;
+                for r in 0..8 {
+                    for c in 0..8 {
+                        let mut db_val = [0.0; 3];
+                        db_val[0] = dm[0][0] * bm[0][c] + dm[0][1] * bm[1][c];
+                        db_val[1] = dm[1][0] * bm[0][c] + dm[1][1] * bm[1][c];
+                        db_val[2] = dm[2][2] * bm[2][c];
+                        k_membrane[r][c] += d_w * (bm[0][r] * db_val[0] + bm[1][r] * db_val[1] + bm[2][r] * db_val[2]);
+                    }
+                }
+
+                // --- 2. Bending ---
+                let mut bb = [[0.0; 12]; 3];
+                for i in 0..4 {
+                    bb[0][3 * i + 2] = -nx[i];
+                    bb[1][3 * i + 1] = ny[i];
+                    bb[2][3 * i + 1] = nx[i];
+                    bb[2][3 * i + 2] = -ny[i];
+                }
+
+                for r in 0..12 {
+                    for c in 0..12 {
+                        let mut db_val = [0.0; 3];
+                        db_val[0] = db[0][0] * bb[0][c] + db[0][1] * bb[1][c];
+                        db_val[1] = db[1][0] * bb[0][c] + db[1][1] * bb[1][c];
+                        db_val[2] = db[2][2] * bb[2][c];
+                        k_bending[r][c] += d_w * (bb[0][r] * db_val[0] + bb[1][r] * db_val[1] + bb[2][r] * db_val[2]);
+                    }
+                }
+
+                // --- 3. Transverse Shear (MITC4) ---
+                let mut ha = [0.0; 12];
+                ha[0] = -0.5; ha[1] = 0.25 * dy_10; ha[2] = -0.25 * dx_10;
+                ha[3] = 0.5;  ha[4] = 0.25 * dy_10; ha[5] = -0.25 * dx_10;
+
+                let mut hb = [0.0; 12];
+                hb[3] = -0.5; hb[4] = 0.25 * dy_21; hb[5] = -0.25 * dx_21;
+                hb[6] = 0.5;  hb[7] = 0.25 * dy_21; hb[8] = -0.25 * dx_21;
+
+                let mut hc = [0.0; 12];
+                hc[9] = -0.5; hc[10] = 0.25 * dy_32; hc[11] = -0.25 * dx_32;
+                hc[6] = 0.5;  hc[7] = 0.25 * dy_32; hc[8] = -0.25 * dx_32;
+
+                let mut hd = [0.0; 12];
+                hd[0] = -0.5; hd[1] = 0.25 * dy_03; hd[2] = -0.25 * dx_03;
+                hd[9] = 0.5;  hd[10] = 0.25 * dy_03; hd[11] = -0.25 * dx_03;
+
+                let mut hs = [[0.0; 12]; 2];
+                for i in 0..12 {
+                    hs[0][i] = 0.5 * (1.0 - eta) * ha[i] + 0.5 * (1.0 + eta) * hc[i];
+                    hs[1][i] = 0.5 * (1.0 - xi) * hd[i] + 0.5 * (1.0 + xi) * hb[i];
+                }
+
+                let mut bs = [[0.0; 12]; 2];
+                for i in 0..12 {
+                    bs[0][i] = inv_j[0][0] * hs[0][i] + inv_j[1][0] * hs[1][i];
+                    bs[1][i] = inv_j[0][1] * hs[0][i] + inv_j[1][1] * hs[1][i];
+                }
+
+                for r in 0..12 {
+                    for c in 0..12 {
+                        k_bending[r][c] += d_w * ds * (bs[0][r] * bs[0][c] + bs[1][r] * bs[1][c]);
+                    }
+                }
+            }
+        }
+
+        let drill_stiff = 1e-4 * shear_modulus * self.thickness * area;
+
+        let mut k_local = vec![vec![0.0; 24]; 24];
+        let mem_dofs = [0, 1, 6, 7, 12, 13, 18, 19];
+        for r in 0..8 {
+            for c in 0..8 {
+                k_local[mem_dofs[r]][mem_dofs[c]] = k_membrane[r][c];
+            }
+        }
+
+        let bend_dofs = [2, 3, 4, 8, 9, 10, 14, 15, 16, 20, 21, 22];
+        for r in 0..12 {
+            for c in 0..12 {
+                k_local[bend_dofs[r]][bend_dofs[c]] = k_bending[r][c];
+            }
+        }
+
+        let drill_dofs = [5, 11, 17, 23];
+        for dof in drill_dofs {
+            k_local[dof][dof] = drill_stiff;
+        }
+
+        let r_mat = [
+            [e1[0], e2[0], e3[0]],
+            [e1[1], e2[1], e3[1]],
+            [e1[2], e2[2], e3[2]],
+        ];
+
+        let mut k_global = vec![vec![0.0; 24]; 24];
+        for n1 in 0..4 {
+            for n2 in 0..4 {
+                let mut local_block = [[0.0; 6]; 6];
+                for r in 0..6 {
+                    for c in 0..6 {
+                        local_block[r][c] = k_local[n1 * 6 + r][n2 * 6 + c];
+                    }
+                }
+
+                let mut global_block = [[0.0; 6]; 6];
+                for sub_r in 0..2 {
+                    for sub_c in 0..2 {
+                        let mut local_sub = [[0.0; 3]; 3];
+                        for r in 0..3 {
+                            for c in 0..3 {
+                                local_sub[r][c] = local_block[sub_r * 3 + r][sub_c * 3 + c];
+                            }
+                        }
+
+                        let mut temp = [[0.0; 3]; 3];
+                        for r in 0..3 {
+                            for c in 0..3 {
+                                let mut sum = 0.0;
+                                for k in 0..3 {
+                                    sum += r_mat[r][k] * local_sub[k][c];
+                                }
+                                temp[r][c] = sum;
+                            }
+                        }
+
+                        for r in 0..3 {
+                            for c in 0..3 {
+                                let mut sum = 0.0;
+                                for k in 0..3 {
+                                    sum += temp[r][k] * r_mat[c][k];
+                                }
+                                global_block[sub_r * 3 + r][sub_c * 3 + c] = sum;
+                            }
+                        }
+                    }
+                }
+
+                for r in 0..6 {
+                    for c in 0..6 {
+                        k_global[n1 * 6 + r][n2 * 6 + c] = global_block[r][c];
+                    }
+                }
+            }
+        }
+
+        Ok(k_global)
+    }
+
+    fn local_mass(
+        &self,
+        node_coords: &[Point3],
+        density: f64,
+        lumped: bool,
+    ) -> Result<Vec<Vec<f64>>, ElementError> {
+        if node_coords.len() != 4 {
+            return Err(ElementError::InvalidNodeCount {
+                expected: 4,
+                actual: node_coords.len(),
+            });
+        }
+
+        let p0 = node_coords[0].coords;
+        let p1 = node_coords[1].coords;
+        let p2 = node_coords[2].coords;
+        let p3 = node_coords[3].coords;
+
+        let mid12 = [0.5 * (p1[0] + p2[0]), 0.5 * (p1[1] + p2[1]), 0.5 * (p1[2] + p2[2])];
+        let mid03 = [0.5 * (p0[0] + p3[0]), 0.5 * (p0[1] + p3[1]), 0.5 * (p0[2] + p3[2])];
+        let v1 = [mid12[0] - mid03[0], mid12[1] - mid03[1], mid12[2] - mid03[2]];
+        let len_v1 = (v1[0].powi(2) + v1[1].powi(2) + v1[2].powi(2)).sqrt();
+        if len_v1 <= f64::EPSILON {
+            return Err(ElementError::DegenerateGeometry);
+        }
+        let e1 = [v1[0] / len_v1, v1[1] / len_v1, v1[2] / len_v1];
+
+        let d13 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+        let d24 = [p3[0] - p1[0], p3[1] - p1[1], p3[2] - p1[2]];
+        let vn = [
+            d13[1] * d24[2] - d13[2] * d24[1],
+            d13[2] * d24[0] - d13[0] * d24[2],
+            d13[0] * d24[1] - d13[1] * d24[0],
+        ];
+        let len_vn = (vn[0].powi(2) + vn[1].powi(2) + vn[2].powi(2)).sqrt();
+        if len_vn <= f64::EPSILON {
+            return Err(ElementError::DegenerateGeometry);
+        }
+        let e3 = [vn[0] / len_vn, vn[1] / len_vn, vn[2] / len_vn];
+        let e2 = [
+            e3[1] * e1[2] - e3[2] * e1[1],
+            e3[2] * e1[0] - e3[0] * e1[2],
+            e3[0] * e1[1] - e3[1] * e1[0],
+        ];
+
+        let mut x = [0.0; 4];
+        let mut y = [0.0; 4];
+        for i in 0..4 {
+            let dx = node_coords[i].coords[0] - p0[0];
+            let dy = node_coords[i].coords[1] - p0[1];
+            let dz = node_coords[i].coords[2] - p0[2];
+            x[i] = dx * e1[0] + dy * e1[1] + dz * e1[2];
+            y[i] = dx * e2[0] + dy * e2[1] + dz * e2[2];
+        }
+
+        let area = 0.5 * ((x[2] - x[0]) * (y[3] - y[1]) - (x[3] - x[1]) * (y[2] - y[0])).abs();
+        let total_mass = density * self.thickness * area;
+
+        let mut mass = vec![vec![0.0; 24]; 24];
+        if lumped {
+            let nodal_trans_mass = total_mass / 4.0;
+            let nodal_rot_mass = nodal_trans_mass * self.thickness.powi(2) / 12.0;
+
+            for n in 0..4 {
+                let base = n * 6;
+                mass[base][base] = nodal_trans_mass;
+                mass[base + 1][base + 1] = nodal_trans_mass;
+                mass[base + 2][base + 2] = nodal_trans_mass;
+                mass[base + 3][base + 3] = nodal_rot_mass;
+                mass[base + 4][base + 4] = nodal_rot_mass;
+                mass[base + 5][base + 5] = nodal_rot_mass;
+            }
+        } else {
+            let gp = [-1.0 / 3.0f64.sqrt(), 1.0 / 3.0f64.sqrt()];
+            let density_factor = density * self.thickness;
+            let mut m_local = vec![vec![0.0; 24]; 24];
+
+            for &xi in &gp {
+                for &eta in &gp {
+                    let n_val = [
+                        0.25 * (1.0 - xi) * (1.0 - eta),
+                        0.25 * (1.0 + xi) * (1.0 - eta),
+                        0.25 * (1.0 + xi) * (1.0 + eta),
+                        0.25 * (1.0 - xi) * (1.0 + eta),
+                    ];
+                    let d_n_dxi = [
+                        -0.25 * (1.0 - eta),
+                         0.25 * (1.0 - eta),
+                         0.25 * (1.0 + eta),
+                        -0.25 * (1.0 + eta),
+                    ];
+                    let d_n_deta = [
+                        -0.25 * (1.0 - xi),
+                        -0.25 * (1.0 + xi),
+                         0.25 * (1.0 + xi),
+                         0.25 * (1.0 - xi),
+                    ];
+                    let mut dx_dxi = 0.0; let mut dy_dxi = 0.0;
+                    let mut dx_deta = 0.0; let mut dy_deta = 0.0;
+                    for i in 0..4 {
+                        dx_dxi += d_n_dxi[i] * x[i];
+                        dy_dxi += d_n_dxi[i] * y[i];
+                        dx_deta += d_n_deta[i] * x[i];
+                        dy_deta += d_n_deta[i] * y[i];
+                    }
+                    let detj = dx_dxi * dy_deta - dy_dxi * dx_deta;
+                    let factor = density_factor * detj.abs();
+
+                    for i in 0..4 {
+                        for j in 0..4 {
+                            let val = n_val[i] * n_val[j] * factor;
+                            m_local[i * 6 + 0][j * 6 + 0] += val;
+                            m_local[i * 6 + 1][j * 6 + 1] += val;
+                            m_local[i * 6 + 2][j * 6 + 2] += val;
+
+                            let val_rot = val * self.thickness.powi(2) / 12.0;
+                            m_local[i * 6 + 3][j * 6 + 3] += val_rot;
+                            m_local[i * 6 + 4][j * 6 + 4] += val_rot;
+                            m_local[i * 6 + 5][j * 6 + 5] += val_rot;
+                        }
+                    }
+                }
+            }
+
+            let r_mat = [
+                [e1[0], e2[0], e3[0]],
+                [e1[1], e2[1], e3[1]],
+                [e1[2], e2[2], e3[2]],
+            ];
+
+            for n1 in 0..4 {
+                for n2 in 0..4 {
+                    let mut local_block = [[0.0; 6]; 6];
+                    for r in 0..6 {
+                        for c in 0..6 {
+                            local_block[r][c] = m_local[n1 * 6 + r][n2 * 6 + c];
+                        }
+                    }
+
+                    let mut global_block = [[0.0; 6]; 6];
+                    for sub_r in 0..2 {
+                        for sub_c in 0..2 {
+                            let mut local_sub = [[0.0; 3]; 3];
+                            for r in 0..3 {
+                                for c in 0..3 {
+                                    local_sub[r][c] = local_block[sub_r * 3 + r][sub_c * 3 + c];
+                                }
+                            }
+
+                            let mut temp = [[0.0; 3]; 3];
+                            for r in 0..3 {
+                                for c in 0..3 {
+                                    let mut sum = 0.0;
+                                    for k in 0..3 {
+                                        sum += r_mat[r][k] * local_sub[k][c];
+                                    }
+                                    temp[r][c] = sum;
+                                }
+                            }
+
+                            for r in 0..3 {
+                                for c in 0..3 {
+                                    let mut sum = 0.0;
+                                    for k in 0..3 {
+                                        sum += temp[r][k] * r_mat[c][k];
+                                    }
+                                    global_block[sub_r * 3 + r][sub_c * 3 + c] = sum;
+                                }
+                            }
+                        }
+                    }
+
+                    for r in 0..6 {
+                        for c in 0..6 {
+                            mass[n1 * 6 + r][n2 * 6 + c] = global_block[r][c];
+                        }
+                    }
+                }
+            }
+        }
 
         Ok(mass)
     }
@@ -1215,5 +1730,49 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_shell_quad4_element() {
+        let nodes = [0, 1, 2, 3];
+        let el = ShellQuad4 {
+            nodes: &nodes,
+            thickness: 0.1,
+        };
+
+        // Square shell of size 2.0 x 2.0 in xy-plane
+        let coords = [
+            Point3::new([0.0, 0.0, 0.0]),
+            Point3::new([2.0, 0.0, 0.0]),
+            Point3::new([2.0, 2.0, 0.0]),
+            Point3::new([0.0, 2.0, 0.0]),
+        ];
+
+        let mut properties = BTreeMap::new();
+        properties.insert("young_modulus".to_string(), 200e9);
+        properties.insert("poisson_ratio".to_string(), 0.3);
+
+        let k = el.local_stiffness(&coords, &properties).unwrap();
+        assert_eq!(k.len(), 24);
+
+        // Check symmetry of 24x24 matrix
+        for r in 0..24 {
+            for c in 0..24 {
+                assert!(
+                    (k[r][c] - k[c][r]).abs() < 1e-2,
+                    "Symmetry failed at ({}, {}): k[r][c]={}, k[c][r]={}",
+                    r,
+                    c,
+                    k[r][c],
+                    k[c][r]
+                );
+            }
+        }
+
+        // Check mass matrix
+        let m = el.local_mass(&coords, 7800.0, true).unwrap();
+        assert_eq!(m.len(), 24);
+        // Total mass = 7800 * 0.1 * 4.0 = 3120 kg. Lumped mass = 780 kg per node.
+        assert!((m[0][0] - 780.0).abs() < 1.0);
     }
 }
