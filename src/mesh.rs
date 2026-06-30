@@ -466,8 +466,18 @@ fn validate_cell_geometry<const D: usize>(
             let a = points[cell.nodes[0]].coords;
             let b = points[cell.nodes[1]].coords;
             let c = points[cell.nodes[2]].coords;
-            let twice_area = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]);
-            if twice_area.abs() <= f64::EPSILON {
+            let twice_area_sq = if D == 2 {
+                let twice_area = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]);
+                twice_area * twice_area
+            } else {
+                let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+                let wx = u[1] * v[2] - u[2] * v[1];
+                let wy = u[2] * v[0] - u[0] * v[2];
+                let wz = u[0] * v[1] - u[1] * v[0];
+                wx * wx + wy * wy + wz * wz
+            };
+            if twice_area_sq <= f64::EPSILON {
                 return Err(MeshError::DegenerateCell { cell_index });
             }
         }

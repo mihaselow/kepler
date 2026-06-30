@@ -670,7 +670,9 @@ fn conjugate_gradient_with_options(
     for iterations in 1..=options.max_iterations {
         let matrix_direction = mul_csr_vec(matrix, &direction);
         let denominator = dot(&direction, &matrix_direction);
-        if denominator.abs() <= f64::EPSILON {
+        let norm_dir = norm(&direction);
+        let norm_mat_dir = norm(&matrix_direction);
+        if denominator.abs() <= 1e-15 * norm_dir * norm_mat_dir {
             return Err(LinalgError::Breakdown);
         }
 
