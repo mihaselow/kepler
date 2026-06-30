@@ -1,6 +1,7 @@
 pub mod gmsh;
 pub mod mesh;
 pub mod params;
+pub mod project;
 pub mod solution;
 pub mod vtk;
 
