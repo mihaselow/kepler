@@ -787,7 +787,7 @@ fn assemble_elasticity_3d_stiffness_matrix(
     // Check for unsupported element kinds before launching parallel work.
     for (cell_index, cell) in mesh.cells().iter().enumerate() {
         match cell.kind {
-            ElementKind::Hex8 | ElementKind::Hex20 | ElementKind::Tet10 => {
+            ElementKind::Hex20 | ElementKind::Tet10 => {
                 return Err(ElasticityError::UnsupportedElementKind {
                     cell_index,
                     kind: cell.kind,
@@ -802,30 +802,54 @@ fn assemble_elasticity_3d_stiffness_matrix(
     let element_triplets = cells
         .par_iter()
         .filter_map(|cell| {
-            if cell.kind != ElementKind::Tet4 {
-                return None;
-            }
-            let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2], cell.nodes[3]];
-            let stiffness = match local_tet4_elasticity_stiffness(mesh, nodes, material) {
+            let stiffness = match cell.kind {
+                ElementKind::Tet4 => {
+                    let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2], cell.nodes[3]];
+                    local_tet4_elasticity_stiffness(mesh, nodes, material)
+                        .map(|arr| arr.iter().map(|row| row.to_vec()).collect::<Vec<_>>())
+                }
+                ElementKind::Hex8 => {
+                    let nodes = [
+                        cell.nodes[0],
+                        cell.nodes[1],
+                        cell.nodes[2],
+                        cell.nodes[3],
+                        cell.nodes[4],
+                        cell.nodes[5],
+                        cell.nodes[6],
+                        cell.nodes[7],
+                    ];
+                    let el = ElasticityHex8 { nodes: &nodes };
+                    let node_coords: Vec<Point3> = nodes
+                        .iter()
+                        .map(|&node_id| mesh.points()[node_id])
+                        .collect();
+                    let mut properties = BTreeMap::new();
+                    properties.insert("young_modulus".to_string(), material.young_modulus);
+                    properties.insert("poisson_ratio".to_string(), material.poisson_ratio);
+                    el.local_stiffness(&node_coords, &properties).map_err(|_| {
+                        ElasticityError::UnsupportedElementKind {
+                            cell_index: 0,
+                            kind: cell.kind,
+                        }
+                    })
+                }
+                _ => return None,
+            };
+
+            let stiffness = match stiffness {
                 Ok(s) => s,
                 Err(e) => return Some(Err(e)),
             };
-            // DOFs: node n -> (ux = n*3, uy = n*3+1, uz = n*3+2)
-            let dofs = [
-                nodes[0] * 3,
-                nodes[0] * 3 + 1,
-                nodes[0] * 3 + 2,
-                nodes[1] * 3,
-                nodes[1] * 3 + 1,
-                nodes[1] * 3 + 2,
-                nodes[2] * 3,
-                nodes[2] * 3 + 1,
-                nodes[2] * 3 + 2,
-                nodes[3] * 3,
-                nodes[3] * 3 + 1,
-                nodes[3] * 3 + 2,
-            ];
-            let mut triplets = Vec::with_capacity(144);
+
+            let mut dofs = Vec::with_capacity(cell.nodes.len() * 3);
+            for &node in &cell.nodes {
+                dofs.push(node * 3);
+                dofs.push(node * 3 + 1);
+                dofs.push(node * 3 + 2);
+            }
+
+            let mut triplets = Vec::with_capacity(dofs.len() * dofs.len());
             for (local_row, global_row) in dofs.iter().copied().enumerate() {
                 for (local_col, global_col) in dofs.iter().copied().enumerate() {
                     triplets.push(Triplet {
@@ -1687,6 +1711,336 @@ impl<'a> Element for ElasticityTet4<'a> {
                 }
             }
         }
+        Ok(mass)
+    }
+}
+
+pub struct ElasticityHex8<'a> {
+    pub nodes: &'a [NodeId; 8],
+}
+
+impl<'a> Element for ElasticityHex8<'a> {
+    fn spatial_dimension(&self) -> usize {
+        3
+    }
+    fn node_count(&self) -> usize {
+        8
+    }
+    fn nodes(&self) -> &[NodeId] {
+        self.nodes
+    }
+    fn active_fields(&self) -> Vec<String> {
+        vec!["ux".to_string(), "uy".to_string(), "uz".to_string()]
+    }
+
+    fn local_stiffness(
+        &self,
+        node_coords: &[Point3],
+        properties: &BTreeMap<String, f64>,
+    ) -> Result<Vec<Vec<f64>>, ElementError> {
+        let young_modulus = *properties
+            .get("young_modulus")
+            .ok_or_else(|| ElementError::MissingProperty("young_modulus".to_string()))?;
+        let poisson_ratio = *properties
+            .get("poisson_ratio")
+            .ok_or_else(|| ElementError::MissingProperty("poisson_ratio".to_string()))?;
+
+        if node_coords.len() != 8 {
+            return Err(ElementError::InvalidNodeCount {
+                expected: 8,
+                actual: node_coords.len(),
+            });
+        }
+
+        let constitutive = constitutive_matrix_3d(ElasticityMaterial3D {
+            young_modulus,
+            poisson_ratio,
+        });
+
+        let g_pts = [-1.0 / 3.0f64.sqrt(), 1.0 / 3.0f64.sqrt()];
+        let mut stiffness = vec![vec![0.0; 24]; 24];
+
+        for &xi in &g_pts {
+            for &eta in &g_pts {
+                for &zeta in &g_pts {
+                    let dn_dxi = [
+                        -0.125 * (1.0 - eta) * (1.0 - zeta),
+                        0.125 * (1.0 - eta) * (1.0 - zeta),
+                        0.125 * (1.0 + eta) * (1.0 - zeta),
+                        -0.125 * (1.0 + eta) * (1.0 - zeta),
+                        -0.125 * (1.0 - eta) * (1.0 + zeta),
+                        0.125 * (1.0 - eta) * (1.0 + zeta),
+                        0.125 * (1.0 + eta) * (1.0 + zeta),
+                        -0.125 * (1.0 + eta) * (1.0 + zeta),
+                    ];
+                    let dn_deta = [
+                        -0.125 * (1.0 - xi) * (1.0 - zeta),
+                        -0.125 * (1.0 + xi) * (1.0 - zeta),
+                        0.125 * (1.0 + xi) * (1.0 - zeta),
+                        0.125 * (1.0 - xi) * (1.0 - zeta),
+                        -0.125 * (1.0 - xi) * (1.0 + zeta),
+                        -0.125 * (1.0 + xi) * (1.0 + zeta),
+                        0.125 * (1.0 + xi) * (1.0 + zeta),
+                        0.125 * (1.0 - xi) * (1.0 + zeta),
+                    ];
+                    let dn_dzeta = [
+                        -0.125 * (1.0 - xi) * (1.0 - eta),
+                        -0.125 * (1.0 + xi) * (1.0 - eta),
+                        -0.125 * (1.0 + xi) * (1.0 + eta),
+                        -0.125 * (1.0 - xi) * (1.0 + eta),
+                        0.125 * (1.0 - xi) * (1.0 - eta),
+                        0.125 * (1.0 + xi) * (1.0 - eta),
+                        0.125 * (1.0 + xi) * (1.0 + eta),
+                        0.125 * (1.0 - xi) * (1.0 + eta),
+                    ];
+
+                    let mut j = [[0.0; 3]; 3];
+                    for a in 0..8 {
+                        j[0][0] += dn_dxi[a] * node_coords[a].coords[0];
+                        j[0][1] += dn_dxi[a] * node_coords[a].coords[1];
+                        j[0][2] += dn_dxi[a] * node_coords[a].coords[2];
+
+                        j[1][0] += dn_deta[a] * node_coords[a].coords[0];
+                        j[1][1] += dn_deta[a] * node_coords[a].coords[1];
+                        j[1][2] += dn_deta[a] * node_coords[a].coords[2];
+
+                        j[2][0] += dn_dzeta[a] * node_coords[a].coords[0];
+                        j[2][1] += dn_dzeta[a] * node_coords[a].coords[1];
+                        j[2][2] += dn_dzeta[a] * node_coords[a].coords[2];
+                    }
+
+                    let det_j = j[0][0] * (j[1][1] * j[2][2] - j[1][2] * j[2][1])
+                        - j[0][1] * (j[1][0] * j[2][2] - j[1][2] * j[2][0])
+                        + j[0][2] * (j[1][0] * j[2][1] - j[1][1] * j[2][0]);
+
+                    if det_j.abs() <= f64::EPSILON {
+                        return Err(ElementError::DegenerateGeometry);
+                    }
+
+                    let inv_j = [
+                        [
+                            (j[1][1] * j[2][2] - j[1][2] * j[2][1]) / det_j,
+                            -(j[0][1] * j[2][2] - j[0][2] * j[2][1]) / det_j,
+                            (j[0][1] * j[1][2] - j[0][2] * j[1][1]) / det_j,
+                        ],
+                        [
+                            -(j[1][0] * j[2][2] - j[1][2] * j[2][0]) / det_j,
+                            (j[0][0] * j[2][2] - j[0][2] * j[2][0]) / det_j,
+                            -(j[0][0] * j[1][2] - j[0][2] * j[1][0]) / det_j,
+                        ],
+                        [
+                            (j[1][0] * j[2][1] - j[1][1] * j[2][0]) / det_j,
+                            -(j[0][0] * j[2][1] - j[0][1] * j[2][0]) / det_j,
+                            (j[0][0] * j[1][1] - j[0][1] * j[1][0]) / det_j,
+                        ],
+                    ];
+
+                    let mut dn_dx = [0.0; 8];
+                    let mut dn_dy = [0.0; 8];
+                    let mut dn_dz = [0.0; 8];
+                    for a in 0..8 {
+                        dn_dx[a] = inv_j[0][0] * dn_dxi[a]
+                            + inv_j[0][1] * dn_deta[a]
+                            + inv_j[0][2] * dn_dzeta[a];
+                        dn_dy[a] = inv_j[1][0] * dn_dxi[a]
+                            + inv_j[1][1] * dn_deta[a]
+                            + inv_j[1][2] * dn_dzeta[a];
+                        dn_dz[a] = inv_j[2][0] * dn_dxi[a]
+                            + inv_j[2][1] * dn_deta[a]
+                            + inv_j[2][2] * dn_dzeta[a];
+                    }
+
+                    let mut b_mat = [[0.0; 24]; 6];
+                    for a in 0..8 {
+                        let col = 3 * a;
+                        b_mat[0][col] = dn_dx[a];
+                        b_mat[1][col + 1] = dn_dy[a];
+                        b_mat[2][col + 2] = dn_dz[a];
+
+                        b_mat[3][col] = dn_dy[a];
+                        b_mat[3][col + 1] = dn_dx[a];
+
+                        b_mat[4][col + 1] = dn_dz[a];
+                        b_mat[4][col + 2] = dn_dy[a];
+
+                        b_mat[5][col] = dn_dz[a];
+                        b_mat[5][col + 2] = dn_dx[a];
+                    }
+
+                    let factor = det_j.abs();
+                    for row in 0..24 {
+                        for col in 0..24 {
+                            let mut val = 0.0;
+                            for alpha in 0..6 {
+                                for beta in 0..6 {
+                                    val += b_mat[alpha][row]
+                                        * constitutive[alpha][beta]
+                                        * b_mat[beta][col];
+                                }
+                            }
+                            stiffness[row][col] += val * factor;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(stiffness)
+    }
+
+    fn local_mass(
+        &self,
+        node_coords: &[Point3],
+        density: f64,
+        lumped: bool,
+    ) -> Result<Vec<Vec<f64>>, ElementError> {
+        if node_coords.len() != 8 {
+            return Err(ElementError::InvalidNodeCount {
+                expected: 8,
+                actual: node_coords.len(),
+            });
+        }
+
+        let g_pts = [-1.0 / 3.0f64.sqrt(), 1.0 / 3.0f64.sqrt()];
+        let mut mass = vec![vec![0.0; 24]; 24];
+
+        if lumped {
+            let mut total_mass = 0.0;
+            for &xi in &g_pts {
+                for &eta in &g_pts {
+                    for &zeta in &g_pts {
+                        let dn_dxi = [
+                            -0.125 * (1.0 - eta) * (1.0 - zeta),
+                            0.125 * (1.0 - eta) * (1.0 - zeta),
+                            0.125 * (1.0 + eta) * (1.0 - zeta),
+                            -0.125 * (1.0 + eta) * (1.0 - zeta),
+                            -0.125 * (1.0 - eta) * (1.0 + zeta),
+                            0.125 * (1.0 - eta) * (1.0 + zeta),
+                            0.125 * (1.0 + eta) * (1.0 + zeta),
+                            -0.125 * (1.0 + eta) * (1.0 + zeta),
+                        ];
+                        let dn_deta = [
+                            -0.125 * (1.0 - xi) * (1.0 - zeta),
+                            -0.125 * (1.0 + xi) * (1.0 - zeta),
+                            0.125 * (1.0 + xi) * (1.0 - zeta),
+                            0.125 * (1.0 - xi) * (1.0 - zeta),
+                            -0.125 * (1.0 - xi) * (1.0 + zeta),
+                            -0.125 * (1.0 + xi) * (1.0 + zeta),
+                            0.125 * (1.0 + xi) * (1.0 + zeta),
+                            0.125 * (1.0 - xi) * (1.0 + zeta),
+                        ];
+                        let dn_dzeta = [
+                            -0.125 * (1.0 - xi) * (1.0 - eta),
+                            -0.125 * (1.0 + xi) * (1.0 - eta),
+                            -0.125 * (1.0 + xi) * (1.0 + eta),
+                            -0.125 * (1.0 - xi) * (1.0 + eta),
+                            0.125 * (1.0 - xi) * (1.0 - eta),
+                            0.125 * (1.0 + xi) * (1.0 - eta),
+                            0.125 * (1.0 + xi) * (1.0 + eta),
+                            0.125 * (1.0 - xi) * (1.0 + eta),
+                        ];
+                        let mut j = [[0.0; 3]; 3];
+                        for a in 0..8 {
+                            j[0][0] += dn_dxi[a] * node_coords[a].coords[0];
+                            j[0][1] += dn_dxi[a] * node_coords[a].coords[1];
+                            j[0][2] += dn_dxi[a] * node_coords[a].coords[2];
+
+                            j[1][0] += dn_deta[a] * node_coords[a].coords[0];
+                            j[1][1] += dn_deta[a] * node_coords[a].coords[1];
+                            j[1][2] += dn_deta[a] * node_coords[a].coords[2];
+
+                            j[2][0] += dn_dzeta[a] * node_coords[a].coords[0];
+                            j[2][1] += dn_dzeta[a] * node_coords[a].coords[1];
+                            j[2][2] += dn_dzeta[a] * node_coords[a].coords[2];
+                        }
+                        let det_j = j[0][0] * (j[1][1] * j[2][2] - j[1][2] * j[2][1])
+                            - j[0][1] * (j[1][0] * j[2][2] - j[1][2] * j[2][0])
+                            + j[0][2] * (j[1][0] * j[2][1] - j[1][1] * j[2][0]);
+                        total_mass += density * det_j.abs();
+                    }
+                }
+            }
+            let nodal_mass = total_mass / 8.0;
+            for i in 0..8 {
+                mass[3 * i][3 * i] = nodal_mass;
+                mass[3 * i + 1][3 * i + 1] = nodal_mass;
+                mass[3 * i + 2][3 * i + 2] = nodal_mass;
+            }
+        } else {
+            for &xi in &g_pts {
+                for &eta in &g_pts {
+                    for &zeta in &g_pts {
+                        let n = [
+                            0.125 * (1.0 - xi) * (1.0 - eta) * (1.0 - zeta),
+                            0.125 * (1.0 + xi) * (1.0 - eta) * (1.0 - zeta),
+                            0.125 * (1.0 + xi) * (1.0 + eta) * (1.0 - zeta),
+                            0.125 * (1.0 - xi) * (1.0 + eta) * (1.0 - zeta),
+                            0.125 * (1.0 - xi) * (1.0 - eta) * (1.0 + zeta),
+                            0.125 * (1.0 + xi) * (1.0 - eta) * (1.0 + zeta),
+                            0.125 * (1.0 + xi) * (1.0 + eta) * (1.0 + zeta),
+                            0.125 * (1.0 - xi) * (1.0 + eta) * (1.0 + zeta),
+                        ];
+                        let dn_dxi = [
+                            -0.125 * (1.0 - eta) * (1.0 - zeta),
+                            0.125 * (1.0 - eta) * (1.0 - zeta),
+                            0.125 * (1.0 + eta) * (1.0 - zeta),
+                            -0.125 * (1.0 + eta) * (1.0 - zeta),
+                            -0.125 * (1.0 - eta) * (1.0 + zeta),
+                            0.125 * (1.0 - eta) * (1.0 + zeta),
+                            0.125 * (1.0 + eta) * (1.0 + zeta),
+                            -0.125 * (1.0 + eta) * (1.0 + zeta),
+                        ];
+                        let dn_deta = [
+                            -0.125 * (1.0 - xi) * (1.0 - zeta),
+                            -0.125 * (1.0 + xi) * (1.0 - zeta),
+                            0.125 * (1.0 + xi) * (1.0 - zeta),
+                            0.125 * (1.0 - xi) * (1.0 - zeta),
+                            -0.125 * (1.0 - xi) * (1.0 + zeta),
+                            -0.125 * (1.0 + xi) * (1.0 + zeta),
+                            0.125 * (1.0 + xi) * (1.0 + zeta),
+                            0.125 * (1.0 - xi) * (1.0 + zeta),
+                        ];
+                        let dn_dzeta = [
+                            -0.125 * (1.0 - xi) * (1.0 - eta),
+                            -0.125 * (1.0 + xi) * (1.0 - eta),
+                            -0.125 * (1.0 + xi) * (1.0 + eta),
+                            -0.125 * (1.0 - xi) * (1.0 + eta),
+                            0.125 * (1.0 - xi) * (1.0 - eta),
+                            0.125 * (1.0 + xi) * (1.0 - eta),
+                            0.125 * (1.0 + xi) * (1.0 + eta),
+                            0.125 * (1.0 - xi) * (1.0 + eta),
+                        ];
+                        let mut j = [[0.0; 3]; 3];
+                        for a in 0..8 {
+                            j[0][0] += dn_dxi[a] * node_coords[a].coords[0];
+                            j[0][1] += dn_dxi[a] * node_coords[a].coords[1];
+                            j[0][2] += dn_dxi[a] * node_coords[a].coords[2];
+
+                            j[1][0] += dn_deta[a] * node_coords[a].coords[0];
+                            j[1][1] += dn_deta[a] * node_coords[a].coords[1];
+                            j[1][2] += dn_deta[a] * node_coords[a].coords[2];
+
+                            j[2][0] += dn_dzeta[a] * node_coords[a].coords[0];
+                            j[2][1] += dn_dzeta[a] * node_coords[a].coords[1];
+                            j[2][2] += dn_dzeta[a] * node_coords[a].coords[2];
+                        }
+                        let det_j = j[0][0] * (j[1][1] * j[2][2] - j[1][2] * j[2][1])
+                            - j[0][1] * (j[1][0] * j[2][2] - j[1][2] * j[2][0])
+                            + j[0][2] * (j[1][0] * j[2][1] - j[1][1] * j[2][0]);
+                        let factor = density * det_j.abs();
+                        for i in 0..8 {
+                            for j in 0..8 {
+                                let term = n[i] * n[j] * factor;
+                                mass[3 * i][3 * j] += term;
+                                mass[3 * i + 1][3 * j + 1] += term;
+                                mass[3 * i + 2][3 * j + 2] += term;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(mass)
     }
 }
@@ -2583,13 +2937,7 @@ pub fn recover_stress_3d(
     let node_count = node_coords.len();
     let cells = mesh.cells();
 
-    // Collect Tet4 elements.
-    let tet4_cells: Vec<_> = cells
-        .iter()
-        .filter(|cell| cell.kind == ElementKind::Tet4)
-        .collect();
-    let n_elem = tet4_cells.len();
-
+    let n_elem = cells.len();
     let mut element_stress = Vec::with_capacity(n_elem);
     let mut element_strain = Vec::with_capacity(n_elem);
 
@@ -2597,95 +2945,191 @@ pub fn recover_stress_3d(
     let mut nodal_stress_sum = vec![[0.0f64; 6]; node_count];
     let mut nodal_count = vec![0usize; node_count];
 
-    for cell in &tet4_cells {
-        let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2], cell.nodes[3]];
-        let a = node_coords[nodes[0]];
-        let b = node_coords[nodes[1]];
-        let c = node_coords[nodes[2]];
-        let d_node = node_coords[nodes[3]];
+    for cell in cells {
+        let (sigma, eps, nodes) = match cell.kind {
+            ElementKind::Tet4 => {
+                let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2], cell.nodes[3]];
+                let a = node_coords[nodes[0]];
+                let b = node_coords[nodes[1]];
+                let c = node_coords[nodes[2]];
+                let d_node = node_coords[nodes[3]];
 
-        let jacobian = [
-            [
-                b.coords[0] - a.coords[0],
-                c.coords[0] - a.coords[0],
-                d_node.coords[0] - a.coords[0],
-            ],
-            [
-                b.coords[1] - a.coords[1],
-                c.coords[1] - a.coords[1],
-                d_node.coords[1] - a.coords[1],
-            ],
-            [
-                b.coords[2] - a.coords[2],
-                c.coords[2] - a.coords[2],
-                d_node.coords[2] - a.coords[2],
-            ],
-        ];
-        let determinant = determinant_3(jacobian);
-        let volume = determinant.abs() / 6.0;
+                let jacobian = [
+                    [
+                        b.coords[0] - a.coords[0],
+                        c.coords[0] - a.coords[0],
+                        d_node.coords[0] - a.coords[0],
+                    ],
+                    [
+                        b.coords[1] - a.coords[1],
+                        c.coords[1] - a.coords[1],
+                        d_node.coords[1] - a.coords[1],
+                    ],
+                    [
+                        b.coords[2] - a.coords[2],
+                        c.coords[2] - a.coords[2],
+                        d_node.coords[2] - a.coords[2],
+                    ],
+                ];
+                let determinant = determinant_3(jacobian);
+                let volume = determinant.abs() / 6.0;
 
-        // Skip degenerate elements silently.
-        if volume <= f64::EPSILON {
-            element_stress.push(StressTensor3D::from_components(
-                0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-            ));
-            element_strain.push(StrainTensor3D {
-                eps_xx: 0.0,
-                eps_yy: 0.0,
-                eps_zz: 0.0,
-                gamma_xy: 0.0,
-                gamma_yz: 0.0,
-                gamma_xz: 0.0,
-            });
-            continue;
-        }
-
-        let inverse = inverse_3(jacobian, determinant);
-        let gradients = [
-            [
-                -(inverse[0][0] + inverse[1][0] + inverse[2][0]),
-                -(inverse[0][1] + inverse[1][1] + inverse[2][1]),
-                -(inverse[0][2] + inverse[1][2] + inverse[2][2]),
-            ],
-            inverse[0],
-            inverse[1],
-            inverse[2],
-        ];
-
-        // Build B-matrix (6 x 12) using the same layout as strain_displacement_matrix_3d.
-        let b_mat = strain_displacement_matrix_3d(gradients);
-
-        // Element displacement vector: [ux0, uy0, uz0, ux1, uy1, uz1, ...]
-        let u_e = [
-            displacements[nodes[0]][0],
-            displacements[nodes[0]][1],
-            displacements[nodes[0]][2],
-            displacements[nodes[1]][0],
-            displacements[nodes[1]][1],
-            displacements[nodes[1]][2],
-            displacements[nodes[2]][0],
-            displacements[nodes[2]][1],
-            displacements[nodes[2]][2],
-            displacements[nodes[3]][0],
-            displacements[nodes[3]][1],
-            displacements[nodes[3]][2],
-        ];
-
-        // Strain: eps = B * u_e  (6-vector)
-        let mut eps = [0.0f64; 6];
-        for (row, b_row) in b_mat.iter().enumerate() {
-            for (col, &b_val) in b_row.iter().enumerate() {
-                eps[row] += b_val * u_e[col];
+                if volume <= f64::EPSILON {
+                    ([0.0; 6], [0.0; 6], cell.nodes.clone())
+                } else {
+                    let inverse = inverse_3(jacobian, determinant);
+                    let gradients = [
+                        [
+                            -(inverse[0][0] + inverse[1][0] + inverse[2][0]),
+                            -(inverse[0][1] + inverse[1][1] + inverse[2][1]),
+                            -(inverse[0][2] + inverse[1][2] + inverse[2][2]),
+                        ],
+                        inverse[0],
+                        inverse[1],
+                        inverse[2],
+                    ];
+                    let b_mat = strain_displacement_matrix_3d(gradients);
+                    let u_e = [
+                        displacements[nodes[0]][0],
+                        displacements[nodes[0]][1],
+                        displacements[nodes[0]][2],
+                        displacements[nodes[1]][0],
+                        displacements[nodes[1]][1],
+                        displacements[nodes[1]][2],
+                        displacements[nodes[2]][0],
+                        displacements[nodes[2]][1],
+                        displacements[nodes[2]][2],
+                        displacements[nodes[3]][0],
+                        displacements[nodes[3]][1],
+                        displacements[nodes[3]][2],
+                    ];
+                    let mut eps = [0.0f64; 6];
+                    for (row, b_row) in b_mat.iter().enumerate() {
+                        for (col, &b_val) in b_row.iter().enumerate() {
+                            eps[row] += b_val * u_e[col];
+                        }
+                    }
+                    let mut sigma = [0.0f64; 6];
+                    for (row, d_row) in d_mat.iter().enumerate() {
+                        for (col, &d_val) in d_row.iter().enumerate() {
+                            sigma[row] += d_val * eps[col];
+                        }
+                    }
+                    (sigma, eps, cell.nodes.clone())
+                }
             }
-        }
+            ElementKind::Hex8 => {
+                let nodes = [
+                    cell.nodes[0],
+                    cell.nodes[1],
+                    cell.nodes[2],
+                    cell.nodes[3],
+                    cell.nodes[4],
+                    cell.nodes[5],
+                    cell.nodes[6],
+                    cell.nodes[7],
+                ];
+                let dn_dxi = [-0.125, 0.125, 0.125, -0.125, -0.125, 0.125, 0.125, -0.125];
+                let dn_deta = [-0.125, -0.125, 0.125, 0.125, -0.125, -0.125, 0.125, 0.125];
+                let dn_dzeta = [-0.125, -0.125, -0.125, -0.125, 0.125, 0.125, 0.125, 0.125];
 
-        // Stress: sigma = D * eps  (6-vector)
-        let mut sigma = [0.0f64; 6];
-        for (row, d_row) in d_mat.iter().enumerate() {
-            for (col, &d_val) in d_row.iter().enumerate() {
-                sigma[row] += d_val * eps[col];
+                let mut j = [[0.0; 3]; 3];
+                for a in 0..8 {
+                    let pt = node_coords[nodes[a]];
+                    j[0][0] += dn_dxi[a] * pt.coords[0];
+                    j[0][1] += dn_dxi[a] * pt.coords[1];
+                    j[0][2] += dn_dxi[a] * pt.coords[2];
+
+                    j[1][0] += dn_deta[a] * pt.coords[0];
+                    j[1][1] += dn_deta[a] * pt.coords[1];
+                    j[1][2] += dn_deta[a] * pt.coords[2];
+
+                    j[2][0] += dn_dzeta[a] * pt.coords[0];
+                    j[2][1] += dn_dzeta[a] * pt.coords[1];
+                    j[2][2] += dn_dzeta[a] * pt.coords[2];
+                }
+
+                let det_j = j[0][0] * (j[1][1] * j[2][2] - j[1][2] * j[2][1])
+                    - j[0][1] * (j[1][0] * j[2][2] - j[1][2] * j[2][0])
+                    + j[0][2] * (j[1][0] * j[2][1] - j[1][1] * j[2][0]);
+
+                if det_j.abs() <= f64::EPSILON {
+                    ([0.0; 6], [0.0; 6], cell.nodes.clone())
+                } else {
+                    let inv_j = [
+                        [
+                            (j[1][1] * j[2][2] - j[1][2] * j[2][1]) / det_j,
+                            -(j[0][1] * j[2][2] - j[0][2] * j[2][1]) / det_j,
+                            (j[0][1] * j[1][2] - j[0][2] * j[1][1]) / det_j,
+                        ],
+                        [
+                            -(j[1][0] * j[2][2] - j[1][2] * j[2][0]) / det_j,
+                            (j[0][0] * j[2][2] - j[0][2] * j[2][0]) / det_j,
+                            -(j[0][0] * j[1][2] - j[0][2] * j[1][0]) / det_j,
+                        ],
+                        [
+                            (j[1][0] * j[2][1] - j[1][1] * j[2][0]) / det_j,
+                            -(j[0][0] * j[2][1] - j[0][1] * j[2][0]) / det_j,
+                            (j[0][0] * j[1][1] - j[0][1] * j[1][0]) / det_j,
+                        ],
+                    ];
+
+                    let mut dn_dx = [0.0; 8];
+                    let mut dn_dy = [0.0; 8];
+                    let mut dn_dz = [0.0; 8];
+                    for a in 0..8 {
+                        dn_dx[a] = inv_j[0][0] * dn_dxi[a]
+                            + inv_j[0][1] * dn_deta[a]
+                            + inv_j[0][2] * dn_dzeta[a];
+                        dn_dy[a] = inv_j[1][0] * dn_dxi[a]
+                            + inv_j[1][1] * dn_deta[a]
+                            + inv_j[1][2] * dn_dzeta[a];
+                        dn_dz[a] = inv_j[2][0] * dn_dxi[a]
+                            + inv_j[2][1] * dn_deta[a]
+                            + inv_j[2][2] * dn_dzeta[a];
+                    }
+
+                    let mut b_mat = [[0.0; 24]; 6];
+                    for a in 0..8 {
+                        let col = 3 * a;
+                        b_mat[0][col] = dn_dx[a];
+                        b_mat[1][col + 1] = dn_dy[a];
+                        b_mat[2][col + 2] = dn_dz[a];
+
+                        b_mat[3][col] = dn_dy[a];
+                        b_mat[3][col + 1] = dn_dx[a];
+
+                        b_mat[4][col + 1] = dn_dz[a];
+                        b_mat[4][col + 2] = dn_dy[a];
+
+                        b_mat[5][col] = dn_dz[a];
+                        b_mat[5][col + 2] = dn_dx[a];
+                    }
+
+                    let mut u_e = [0.0; 24];
+                    for a in 0..8 {
+                        u_e[3 * a] = displacements[nodes[a]][0];
+                        u_e[3 * a + 1] = displacements[nodes[a]][1];
+                        u_e[3 * a + 2] = displacements[nodes[a]][2];
+                    }
+
+                    let mut eps = [0.0f64; 6];
+                    for (row, b_row) in b_mat.iter().enumerate() {
+                        for (col, &b_val) in b_row.iter().enumerate() {
+                            eps[row] += b_val * u_e[col];
+                        }
+                    }
+                    let mut sigma = [0.0f64; 6];
+                    for (row, d_row) in d_mat.iter().enumerate() {
+                        for (col, &d_val) in d_row.iter().enumerate() {
+                            sigma[row] += d_val * eps[col];
+                        }
+                    }
+                    (sigma, eps, cell.nodes.clone())
+                }
             }
-        }
+            _ => ([0.0; 6], [0.0; 6], cell.nodes.clone()),
+        };
 
         element_strain.push(StrainTensor3D {
             eps_xx: eps[0],

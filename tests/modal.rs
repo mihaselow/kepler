@@ -201,3 +201,37 @@ fn assert_close(actual: f64, expected: f64) {
         "expected {actual} to be close to {expected}",
     );
 }
+
+#[test]
+fn modal_solves_hex8_modes() {
+    let mesh = MeshTopology::<3>::new(
+        vec![
+            PointD::new([0.0, 0.0, 0.0]),
+            PointD::new([1.0, 0.0, 0.0]),
+            PointD::new([1.0, 1.0, 0.0]),
+            PointD::new([0.0, 1.0, 0.0]),
+            PointD::new([0.0, 0.0, 1.0]),
+            PointD::new([1.0, 0.0, 1.0]),
+            PointD::new([1.0, 1.0, 1.0]),
+            PointD::new([0.0, 1.0, 1.0]),
+        ],
+        vec![Cell::new(ElementKind::Hex8, vec![0, 1, 2, 3, 4, 5, 6, 7])],
+    )
+    .unwrap();
+
+    let problem = ModalProblem3D {
+        elasticity: ElasticityProblem3D {
+            material: material_3d(),
+            constraints: fixed_nodes_3d(&[0, 2, 3, 4]),
+            forces: vec![],
+        },
+        density: 2.0,
+        mode_count: 2,
+    };
+
+    let result = solve_modal_3d(&mesh, &problem).unwrap();
+
+    assert_eq!(result.modes.len(), 2);
+    assert!(result.modes[0].frequency_hz > 0.0);
+    assert!(result.modes[1].frequency_hz >= result.modes[0].frequency_hz);
+}

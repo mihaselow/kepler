@@ -3,6 +3,7 @@ use std::{collections::BTreeSet, f64::consts::PI};
 use sprs::CsMat;
 use thiserror::Error;
 
+use crate::fem::element::Element;
 use crate::{
     fem::elasticity::{
         DisplacementComponent, DisplacementComponent3D, DisplacementConstraint,
@@ -321,37 +322,69 @@ fn lumped_mass_3d(mesh: &MeshTopology<3>, density: f64) -> Vec<f64> {
     let cells = mesh.cells();
     let contributions: Vec<Vec<(usize, f64)>> = cells
         .par_iter()
-        .filter_map(|cell| {
-            if cell.kind != ElementKind::Tet4 {
-                return None;
+        .filter_map(|cell| match cell.kind {
+            ElementKind::Tet4 => {
+                let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2], cell.nodes[3]];
+                let [a, b, c, d] = nodes.map(|node| mesh.points()[node]);
+                let jacobian = [
+                    [
+                        b.coords[0] - a.coords[0],
+                        c.coords[0] - a.coords[0],
+                        d.coords[0] - a.coords[0],
+                    ],
+                    [
+                        b.coords[1] - a.coords[1],
+                        c.coords[1] - a.coords[1],
+                        d.coords[1] - a.coords[1],
+                    ],
+                    [
+                        b.coords[2] - a.coords[2],
+                        c.coords[2] - a.coords[2],
+                        d.coords[2] - a.coords[2],
+                    ],
+                ];
+                let nodal_mass = density * determinant_3(jacobian).abs() / 24.0;
+                let mut elem_mass = Vec::with_capacity(12);
+                for node in nodes {
+                    elem_mass.push((dof_index_3d(node, DisplacementComponent3D::X), nodal_mass));
+                    elem_mass.push((dof_index_3d(node, DisplacementComponent3D::Y), nodal_mass));
+                    elem_mass.push((dof_index_3d(node, DisplacementComponent3D::Z), nodal_mass));
+                }
+                Some(elem_mass)
             }
-            let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2], cell.nodes[3]];
-            let [a, b, c, d] = nodes.map(|node| mesh.points()[node]);
-            let jacobian = [
-                [
-                    b.coords[0] - a.coords[0],
-                    c.coords[0] - a.coords[0],
-                    d.coords[0] - a.coords[0],
-                ],
-                [
-                    b.coords[1] - a.coords[1],
-                    c.coords[1] - a.coords[1],
-                    d.coords[1] - a.coords[1],
-                ],
-                [
-                    b.coords[2] - a.coords[2],
-                    c.coords[2] - a.coords[2],
-                    d.coords[2] - a.coords[2],
-                ],
-            ];
-            let nodal_mass = density * determinant_3(jacobian).abs() / 24.0;
-            let mut elem_mass = Vec::with_capacity(12);
-            for node in nodes {
-                elem_mass.push((dof_index_3d(node, DisplacementComponent3D::X), nodal_mass));
-                elem_mass.push((dof_index_3d(node, DisplacementComponent3D::Y), nodal_mass));
-                elem_mass.push((dof_index_3d(node, DisplacementComponent3D::Z), nodal_mass));
+            ElementKind::Hex8 => {
+                let nodes = [
+                    cell.nodes[0],
+                    cell.nodes[1],
+                    cell.nodes[2],
+                    cell.nodes[3],
+                    cell.nodes[4],
+                    cell.nodes[5],
+                    cell.nodes[6],
+                    cell.nodes[7],
+                ];
+                let node_coords: Vec<_> = nodes.iter().map(|&n| mesh.points()[n]).collect();
+                let el = crate::fem::elasticity::ElasticityHex8 { nodes: &nodes };
+                let local_m = el.local_mass(&node_coords, density, true).ok()?;
+                let mut elem_mass = Vec::with_capacity(24);
+                for i in 0..8 {
+                    let node = nodes[i];
+                    elem_mass.push((
+                        dof_index_3d(node, DisplacementComponent3D::X),
+                        local_m[3 * i][3 * i],
+                    ));
+                    elem_mass.push((
+                        dof_index_3d(node, DisplacementComponent3D::Y),
+                        local_m[3 * i + 1][3 * i + 1],
+                    ));
+                    elem_mass.push((
+                        dof_index_3d(node, DisplacementComponent3D::Z),
+                        local_m[3 * i + 2][3 * i + 2],
+                    ));
+                }
+                Some(elem_mass)
             }
-            Some(elem_mass)
+            _ => None,
         })
         .collect();
 

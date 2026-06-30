@@ -3,7 +3,7 @@ use kepler::{
     ElasticityProblem3D, ElementKind, LinearSolverBackend, LinearSolverOptions, MeshTopology,
     NewmarkSolverOptions, NodalForce3D, PointD, SolverOptions, TransientElasticityProblem3D,
     fem::elasticity::{assemble_elasticity_3d_system, local_tet4_elasticity_stiffness},
-    solve_elasticity_3d, solve_transient_elasticity_3d,
+    solve_elasticity_3d, solve_elasticity_3d_with_solver, solve_transient_elasticity_3d,
 };
 
 const EPS: f64 = 1.0e-10;
@@ -84,36 +84,125 @@ fn elasticity_3d_rejects_duplicate_constraints() {
 }
 
 #[test]
-fn elasticity_3d_rejects_hex8_until_implemented() {
+fn elasticity_3d_solves_hex8_solid_element() {
     let mesh = MeshTopology::<3>::new(
         vec![
-            PointD::new([0.0, 0.0, 0.0]),
-            PointD::new([1.0, 0.0, 0.0]),
-            PointD::new([1.0, 1.0, 0.0]),
-            PointD::new([0.0, 1.0, 0.0]),
-            PointD::new([0.0, 0.0, 1.0]),
-            PointD::new([1.0, 0.0, 1.0]),
-            PointD::new([1.0, 1.0, 1.0]),
-            PointD::new([0.0, 1.0, 1.0]),
+            PointD::new([0.0, 0.0, 0.0]), // 0
+            PointD::new([1.0, 0.0, 0.0]), // 1
+            PointD::new([1.0, 1.0, 0.0]), // 2
+            PointD::new([0.0, 1.0, 0.0]), // 3
+            PointD::new([0.0, 0.0, 1.0]), // 4
+            PointD::new([1.0, 0.0, 1.0]), // 5
+            PointD::new([1.0, 1.0, 1.0]), // 6
+            PointD::new([0.0, 1.0, 1.0]), // 7
         ],
         vec![Cell::new(ElementKind::Hex8, vec![0, 1, 2, 3, 4, 5, 6, 7])],
     )
     .unwrap();
+
     let problem = ElasticityProblem3D {
         material: material(),
-        constraints: vec![],
-        forces: vec![],
+        constraints: vec![
+            // Constrain X-face at x=0 to prevent rigid body motion and rotation
+            DisplacementConstraint3D {
+                node: 0,
+                component: DisplacementComponent3D::X,
+                value: 0.0,
+            },
+            DisplacementConstraint3D {
+                node: 0,
+                component: DisplacementComponent3D::Y,
+                value: 0.0,
+            },
+            DisplacementConstraint3D {
+                node: 0,
+                component: DisplacementComponent3D::Z,
+                value: 0.0,
+            },
+            DisplacementConstraint3D {
+                node: 3,
+                component: DisplacementComponent3D::X,
+                value: 0.0,
+            },
+            DisplacementConstraint3D {
+                node: 3,
+                component: DisplacementComponent3D::Z,
+                value: 0.0,
+            },
+            DisplacementConstraint3D {
+                node: 4,
+                component: DisplacementComponent3D::X,
+                value: 0.0,
+            },
+            DisplacementConstraint3D {
+                node: 4,
+                component: DisplacementComponent3D::Y,
+                value: 0.0,
+            },
+            DisplacementConstraint3D {
+                node: 7,
+                component: DisplacementComponent3D::X,
+                value: 0.0,
+            },
+        ],
+        forces: vec![
+            NodalForce3D {
+                node: 1,
+                fx: 0.25,
+                fy: 0.0,
+                fz: 0.0,
+            },
+            NodalForce3D {
+                node: 2,
+                fx: 0.25,
+                fy: 0.0,
+                fz: 0.0,
+            },
+            NodalForce3D {
+                node: 5,
+                fx: 0.25,
+                fy: 0.0,
+                fz: 0.0,
+            },
+            NodalForce3D {
+                node: 6,
+                fx: 0.25,
+                fy: 0.0,
+                fz: 0.0,
+            },
+        ],
     };
 
-    let error = assemble_elasticity_3d_system(&mesh, &problem).unwrap_err();
+    let result =
+        solve_elasticity_3d_with_solver(&mesh, &problem, LinearSolverOptions::default()).unwrap();
 
-    assert!(matches!(
-        error,
-        ElasticityError::UnsupportedElementKind {
-            cell_index: 0,
-            kind: ElementKind::Hex8,
-        }
-    ));
+    // Verify displacements at loaded face are positive in X
+    assert!(result.displacements[1][0] > 0.0);
+    assert!(result.displacements[2][0] > 0.0);
+    assert!(result.displacements[5][0] > 0.0);
+    assert!(result.displacements[6][0] > 0.0);
+
+    // Verify stress recovery at centroid
+    assert_eq!(result.element_stress.len(), 1);
+    assert_eq!(result.element_strain.len(), 1);
+    assert_eq!(result.nodal_stress.len(), 8);
+
+    let stress = result.element_stress[0];
+    assert!(stress.sigma_xx > 0.0);
+    assert_close(stress.sigma_yy, 0.0);
+    assert_close(stress.sigma_zz, 0.0);
+    assert_close(stress.sigma_xy, 0.0);
+    assert_close(stress.sigma_yz, 0.0);
+    assert_close(stress.sigma_xz, 0.0);
+    assert_close(stress.von_mises, stress.sigma_xx);
+
+    let strain = result.element_strain[0];
+    assert!(strain.eps_xx > 0.0);
+    assert!(strain.eps_yy < 0.0); // Poisson contraction
+    assert!(strain.eps_zz < 0.0); // Poisson contraction
+    assert_close(strain.gamma_xy, 0.0);
+    assert_close(strain.gamma_yz, 0.0);
+    assert_close(strain.gamma_xz, 0.0);
 }
 
 #[test]
