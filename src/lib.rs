@@ -4,6 +4,7 @@ pub mod fem;
 pub mod io;
 pub mod linalg;
 pub mod mesh;
+pub mod parallel;
 
 pub use annotation::{
     AnnotationError, AnnotationId, EntitySelector, GeometryAnnotations, MaterialAssignment,
@@ -80,12 +81,13 @@ pub use io::{
     vtk::{VtkScalarField, format_vtk_legacy, write_vtk_legacy_file},
 };
 pub use linalg::{
-    ConfiguredLinearSolver, DiagonalDiagnostics, LinalgError, LinearSolver, LinearSolverBackend,
-    LinearSolverOptions, MatrixDiagnostics, NewmarkSolverOptions, NewmarkStepResult,
-    NonlinearSolverDiagnostics, NonlinearSolverOptions, NonlinearSolverResult, NonlinearSystem,
-    PreconditionerKind, SolverDiagnostics, SolverOptions, SparsityStats, SpdHeuristics,
-    SymmetryDiagnostics, TransientSolverOptions, TransientStepResult, analyze_matrix, newton_solve,
-    solve_harmonic_response, solve_linear_system, solve_linear_transient, solve_newmark_transient,
+    ConfiguredLinearSolver, DiagonalDiagnostics, LanczosEigenResult, LinalgError, LinearSolver,
+    LinearSolverBackend, LinearSolverOptions, MatrixDiagnostics, NewmarkSolverOptions,
+    NewmarkStepResult, NonlinearSolverDiagnostics, NonlinearSolverOptions, NonlinearSolverResult,
+    NonlinearSystem, PreconditionerKind, SolverDiagnostics, SolverOptions, SparsityStats,
+    SpdHeuristics, SymmetryDiagnostics, TransientSolverOptions, TransientStepResult,
+    analyze_matrix, newton_solve, solve_harmonic_response, solve_lanczos_modes,
+    solve_linear_system, solve_linear_transient, solve_newmark_transient,
 };
 pub use mesh::{
     Cell, CellId, ElementKind, EntityDimension, FacetId, FieldId, MaterialId, Mesh, MeshError,

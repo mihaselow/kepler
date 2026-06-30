@@ -3,7 +3,7 @@ use kepler::{
     ElasticityModel, ElasticityProblem, LinearSolverBackend, LinearSolverOptions, Mesh,
     NewmarkSolverOptions, NodalForce, Point2, SolverOptions, TransientElasticityProblem, Tri3,
     fem::elasticity::{assemble_elasticity_system, local_elasticity_stiffness},
-    solve_elasticity, solve_transient_elasticity,
+    solve_elasticity, solve_elasticity_with_solver, solve_transient_elasticity,
 };
 
 const EPS: f64 = 1.0e-10;
@@ -345,4 +345,57 @@ fn test_rayleigh_damping_decays_vibration() {
     let x_damped_last = res_damped.steps.last().unwrap().displacements[1][0];
 
     assert!(x_damped_last.abs() < x_undamped_last.abs());
+}
+
+#[test]
+fn elasticity_recovers_stress_and_strain_for_triangle() {
+    let mesh = unit_triangle();
+    let problem = ElasticityProblem {
+        material: material(),
+        thickness: 1.0,
+        constraints: vec![
+            DisplacementConstraint {
+                node: 0,
+                component: DisplacementComponent::X,
+                value: 0.0,
+            },
+            DisplacementConstraint {
+                node: 0,
+                component: DisplacementComponent::Y,
+                value: 0.0,
+            },
+            DisplacementConstraint {
+                node: 2,
+                component: DisplacementComponent::X,
+                value: 0.0,
+            },
+        ],
+        forces: vec![NodalForce {
+            node: 1,
+            fx: 1.0,
+            fy: 0.0,
+        }],
+    };
+
+    let result =
+        solve_elasticity_with_solver(&mesh, &problem, LinearSolverOptions::default()).unwrap();
+
+    assert_eq!(result.element_stress.len(), 1);
+    assert_eq!(result.element_strain.len(), 1);
+    assert_eq!(result.nodal_stress.len(), 3);
+
+    // Stress components should be physically reasonable for uniaxial tension.
+    let stress = result.element_stress[0];
+    assert!(stress.sigma_xx > 0.0);
+    assert_close(stress.sigma_yy, 0.0);
+    assert_close(stress.sigma_xy, 0.0);
+
+    // von Mises stress should match sigma_xx for uniaxial tension.
+    assert_close(stress.von_mises, stress.sigma_xx);
+
+    // Strain components should also reflect uniaxial tension.
+    let strain = result.element_strain[0];
+    assert!(strain.eps_xx > 0.0);
+    assert!(strain.eps_yy < 0.0); // Poisson contraction
+    assert_close(strain.gamma_xy, 0.0);
 }

@@ -143,23 +143,59 @@ where
         dof_manager.register_dof(node_id, "u");
     }
 
-    let mut triplets = TriMat::with_capacity(
-        (mesh.node_count(), mesh.node_count()),
-        mesh.triangles().len() * 9 + dirichlet.len(),
-    );
-    let mut rhs = vec![0.0; mesh.node_count()];
-
+    // Pre-evaluate the source in serial to avoid Sync constraints on F.
+    let mut source_values = Vec::with_capacity(mesh.triangles().len());
     for triangle in mesh.triangles() {
-        let stiffness = local_stiffness(mesh, triangle, problem.conductivity)?;
-        let load = local_load(mesh, triangle, &problem.source)?;
+        let (_, _, centroid) = triangle_geometry(mesh, triangle);
+        let val = (problem.source)(centroid.x, centroid.y);
+        if !val.is_finite() {
+            return Err(PoissonError::NonFiniteSource {
+                x: centroid.x,
+                y: centroid.y,
+            });
+        }
+        source_values.push(val);
+    }
 
-        for (local_row, global_row) in triangle.nodes.iter().copied().enumerate() {
-            let eq_row = dof_manager.get_eq_index(global_row, "u").unwrap();
-            rhs[eq_row] += load[local_row];
-            for (local_col, global_col) in triangle.nodes.iter().copied().enumerate() {
-                let eq_col = dof_manager.get_eq_index(global_col, "u").unwrap();
-                triplets.add_triplet(eq_row, eq_col, stiffness[local_row][local_col]);
+    use crate::parallel::Triplet;
+    use rayon::prelude::*;
+
+    let conductivity = problem.conductivity;
+    let triangles = mesh.triangles();
+    let element_contributions = triangles
+        .par_iter()
+        .zip(&source_values)
+        .map(|(triangle, &source_val)| {
+            let stiffness = local_stiffness(mesh, triangle, conductivity)?;
+            let (area, _, _) = triangle_geometry(mesh, triangle);
+            let load = [source_val * area / 3.0; 3];
+
+            let mut elem_triplets = Vec::with_capacity(9);
+            let mut elem_loads = Vec::with_capacity(3);
+            for (local_row, global_row) in triangle.nodes.iter().copied().enumerate() {
+                let eq_row = dof_manager.get_eq_index(global_row, "u").unwrap();
+                elem_loads.push((eq_row, load[local_row]));
+                for (local_col, global_col) in triangle.nodes.iter().copied().enumerate() {
+                    let eq_col = dof_manager.get_eq_index(global_col, "u").unwrap();
+                    elem_triplets.push(Triplet {
+                        row: eq_row,
+                        col: eq_col,
+                        val: stiffness[local_row][local_col],
+                    });
+                }
             }
+            Ok((elem_triplets, elem_loads))
+        })
+        .collect::<Result<Vec<_>, PoissonError>>()?;
+
+    let mut triplets = TriMat::new((mesh.node_count(), mesh.node_count()));
+    let mut rhs = vec![0.0; mesh.node_count()];
+    for (elem_triplets, elem_loads) in element_contributions {
+        for t in elem_triplets {
+            triplets.add_triplet(t.row, t.col, t.val);
+        }
+        for (eq_row, val) in elem_loads {
+            rhs[eq_row] += val;
         }
     }
 
@@ -182,30 +218,23 @@ where
         dof_manager.register_dof(node_id, "u");
     }
 
-    let tet_count = mesh
-        .cells()
-        .iter()
-        .filter(|cell| cell.kind == ElementKind::Tet4)
-        .count();
-    let mut triplets =
-        TriMat::with_capacity((mesh.points().len(), mesh.points().len()), tet_count * 16);
-    let mut rhs = vec![0.0; mesh.points().len()];
-
+    // Check for unsupported elements and pre-evaluate source values in serial.
+    let mut source_values = vec![0.0f64; mesh.cells().len()];
     for (cell_index, cell) in mesh.cells().iter().enumerate() {
         match cell.kind {
             ElementKind::Tet4 => {
                 let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2], cell.nodes[3]];
-                let stiffness = local_tet4_stiffness(mesh, nodes, problem.conductivity)?;
-                let load = local_tet4_load(mesh, nodes, &problem.source)?;
-
-                for (local_row, global_row) in nodes.iter().copied().enumerate() {
-                    let eq_row = dof_manager.get_eq_index(global_row, "u").unwrap();
-                    rhs[eq_row] += load[local_row];
-                    for (local_col, global_col) in nodes.iter().copied().enumerate() {
-                        let eq_col = dof_manager.get_eq_index(global_col, "u").unwrap();
-                        triplets.add_triplet(eq_row, eq_col, stiffness[local_row][local_col]);
-                    }
+                let (_, _, centroid) = tetrahedron_geometry(mesh, nodes);
+                let val =
+                    (problem.source)(centroid.coords[0], centroid.coords[1], centroid.coords[2]);
+                if !val.is_finite() {
+                    return Err(PoissonError::NonFiniteSource3D {
+                        x: centroid.coords[0],
+                        y: centroid.coords[1],
+                        z: centroid.coords[2],
+                    });
                 }
+                source_values[cell_index] = val;
             }
             ElementKind::Line2
             | ElementKind::Line3
@@ -219,6 +248,56 @@ where
                     kind: cell.kind,
                 });
             }
+        }
+    }
+
+    use crate::parallel::Triplet;
+    use rayon::prelude::*;
+
+    let conductivity = problem.conductivity;
+    let cells = mesh.cells();
+    let element_contributions = cells
+        .par_iter()
+        .enumerate()
+        .filter_map(|(cell_index, cell)| {
+            if cell.kind != ElementKind::Tet4 {
+                return None;
+            }
+            let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2], cell.nodes[3]];
+            let stiffness = match local_tet4_stiffness(mesh, nodes, conductivity) {
+                Ok(s) => s,
+                Err(e) => return Some(Err(e)),
+            };
+            let (volume, _, _) = tetrahedron_geometry(mesh, nodes);
+            let source_val = source_values[cell_index];
+            let load = [source_val * volume / 4.0; 4];
+
+            let mut elem_triplets = Vec::with_capacity(16);
+            let mut elem_loads = Vec::with_capacity(4);
+            for (local_row, global_row) in nodes.iter().copied().enumerate() {
+                let eq_row = dof_manager.get_eq_index(global_row, "u").unwrap();
+                elem_loads.push((eq_row, load[local_row]));
+                for (local_col, global_col) in nodes.iter().copied().enumerate() {
+                    let eq_col = dof_manager.get_eq_index(global_col, "u").unwrap();
+                    elem_triplets.push(Triplet {
+                        row: eq_row,
+                        col: eq_col,
+                        val: stiffness[local_row][local_col],
+                    });
+                }
+            }
+            Some(Ok((elem_triplets, elem_loads)))
+        })
+        .collect::<Result<Vec<_>, PoissonError>>()?;
+
+    let mut triplets = TriMat::new((mesh.points().len(), mesh.points().len()));
+    let mut rhs = vec![0.0; mesh.points().len()];
+    for (elem_triplets, elem_loads) in element_contributions {
+        for t in elem_triplets {
+            triplets.add_triplet(t.row, t.col, t.val);
+        }
+        for (eq_row, val) in elem_loads {
+            rhs[eq_row] += val;
         }
     }
 

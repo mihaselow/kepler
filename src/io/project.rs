@@ -99,6 +99,7 @@ pub enum ProjectLinearSolverBackend {
 pub enum ProjectPreconditionerKind {
     None,
     Jacobi,
+    Amg,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -211,6 +212,7 @@ impl From<PreconditionerKind> for ProjectPreconditionerKind {
         match value {
             PreconditionerKind::None => Self::None,
             PreconditionerKind::Jacobi => Self::Jacobi,
+            PreconditionerKind::Amg => Self::Amg,
         }
     }
 }
@@ -220,6 +222,7 @@ impl From<ProjectPreconditionerKind> for PreconditionerKind {
         match value {
             ProjectPreconditionerKind::None => Self::None,
             ProjectPreconditionerKind::Jacobi => Self::Jacobi,
+            ProjectPreconditionerKind::Amg => Self::Amg,
         }
     }
 }

@@ -4,10 +4,7 @@ use sprs::{CsMat, TriMat};
 use thiserror::Error;
 
 use crate::{
-    fem::{
-        dof::DOFManager,
-        element::{Element, ElementError},
-    },
+    fem::element::{Element, ElementError},
     linalg::{
         LinalgError, LinearSolverOptions, NewmarkSolverOptions, SolverDiagnostics, SolverOptions,
         solve_linear_system, solve_newmark_transient,
@@ -142,10 +139,108 @@ pub struct ElasticityResult {
     pub residual_norm: f64,
 }
 
+/// 2D stress tensor components at a single Gauss point or node.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StressTensor2D {
+    pub sigma_xx: f64,
+    pub sigma_yy: f64,
+    pub sigma_xy: f64,
+    /// von Mises equivalent stress.
+    pub von_mises: f64,
+    /// Maximum principal stress.
+    pub principal_max: f64,
+    /// Minimum principal stress.
+    pub principal_min: f64,
+}
+
+impl StressTensor2D {
+    pub fn from_components(sigma_xx: f64, sigma_yy: f64, sigma_xy: f64) -> Self {
+        let vm =
+            (sigma_xx.powi(2) - sigma_xx * sigma_yy + sigma_yy.powi(2) + 3.0 * sigma_xy.powi(2))
+                .sqrt();
+        let avg = (sigma_xx + sigma_yy) / 2.0;
+        let r = (((sigma_xx - sigma_yy) / 2.0).powi(2) + sigma_xy.powi(2)).sqrt();
+        Self {
+            sigma_xx,
+            sigma_yy,
+            sigma_xy,
+            von_mises: vm,
+            principal_max: avg + r,
+            principal_min: avg - r,
+        }
+    }
+}
+
+/// 2D strain tensor at a single point.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StrainTensor2D {
+    pub eps_xx: f64,
+    pub eps_yy: f64,
+    /// Engineering shear strain (2 * eps_xy).
+    pub gamma_xy: f64,
+}
+
+/// 3D stress tensor at a single point.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StressTensor3D {
+    pub sigma_xx: f64,
+    pub sigma_yy: f64,
+    pub sigma_zz: f64,
+    pub sigma_xy: f64,
+    pub sigma_yz: f64,
+    pub sigma_xz: f64,
+    /// von Mises equivalent stress.
+    pub von_mises: f64,
+}
+
+impl StressTensor3D {
+    pub fn from_components(
+        sigma_xx: f64,
+        sigma_yy: f64,
+        sigma_zz: f64,
+        sigma_xy: f64,
+        sigma_yz: f64,
+        sigma_xz: f64,
+    ) -> Self {
+        let vm = (0.5
+            * ((sigma_xx - sigma_yy).powi(2)
+                + (sigma_yy - sigma_zz).powi(2)
+                + (sigma_zz - sigma_xx).powi(2)
+                + 6.0 * (sigma_xy.powi(2) + sigma_yz.powi(2) + sigma_xz.powi(2))))
+        .sqrt();
+        Self {
+            sigma_xx,
+            sigma_yy,
+            sigma_zz,
+            sigma_xy,
+            sigma_yz,
+            sigma_xz,
+            von_mises: vm,
+        }
+    }
+}
+
+/// 3D strain tensor at a single point.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StrainTensor3D {
+    pub eps_xx: f64,
+    pub eps_yy: f64,
+    pub eps_zz: f64,
+    pub gamma_xy: f64,
+    pub gamma_yz: f64,
+    pub gamma_xz: f64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ElasticitySolverResult {
     pub displacements: Vec<[f64; 2]>,
     pub diagnostics: SolverDiagnostics,
+    /// Element-centroid stress tensors (one per Tri3 element).
+    pub element_stress: Vec<StressTensor2D>,
+    /// Element-centroid strain tensors (one per Tri3 element).
+    pub element_strain: Vec<StrainTensor2D>,
+    /// Node-averaged stress tensors (one per mesh node).
+    pub nodal_stress: Vec<StressTensor2D>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -159,6 +254,12 @@ pub struct ElasticityResult3D {
 pub struct ElasticitySolverResult3D {
     pub displacements: Vec<[f64; 3]>,
     pub diagnostics: SolverDiagnostics,
+    /// Element-centroid stress tensors (one per Tet4 element).
+    pub element_stress: Vec<StressTensor3D>,
+    /// Element-centroid strain tensors (one per Tet4 element).
+    pub element_strain: Vec<StrainTensor3D>,
+    /// Node-averaged stress tensors (one per mesh node).
+    pub nodal_stress: Vec<StressTensor3D>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -267,15 +368,21 @@ pub fn solve_elasticity_with_solver(
 ) -> Result<ElasticitySolverResult, ElasticityError> {
     let (matrix, rhs) = assemble_elasticity_system(mesh, problem)?;
     let result = solve_linear_system(&matrix, &rhs, options)?;
-    let displacements = result
+    let displacements: Vec<[f64; 2]> = result
         .values
         .chunks_exact(2)
         .map(|values| [values[0], values[1]])
         .collect();
 
+    let (element_stress, element_strain, nodal_stress) =
+        recover_stress_2d(mesh, &problem.material, &displacements);
+
     Ok(ElasticitySolverResult {
         displacements,
         diagnostics: result.diagnostics,
+        element_stress,
+        element_strain,
+        nodal_stress,
     })
 }
 
@@ -295,15 +402,21 @@ pub fn solve_elasticity_3d_with_solver(
 ) -> Result<ElasticitySolverResult3D, ElasticityError> {
     let (matrix, rhs) = assemble_elasticity_3d_system(mesh, problem)?;
     let result = solve_linear_system(&matrix, &rhs, options)?;
-    let displacements = result
+    let displacements: Vec<[f64; 3]> = result
         .values
         .chunks_exact(3)
         .map(|values| [values[0], values[1], values[2]])
         .collect();
 
+    let (element_stress, element_strain, nodal_stress) =
+        recover_stress_3d(mesh, mesh.points(), &problem.material, &displacements);
+
     Ok(ElasticitySolverResult3D {
         displacements,
         diagnostics: result.diagnostics,
+        element_stress,
+        element_strain,
+        nodal_stress,
     })
 }
 
@@ -572,99 +685,106 @@ fn assemble_elasticity_stiffness_matrix(
     material: ElasticityMaterial,
     thickness: f64,
 ) -> Result<CsMat<f64>, ElasticityError> {
-    let mut dof_manager = DOFManager::new();
-    for node_id in 0..mesh.node_count() {
-        dof_manager.register_dof(node_id, "ux");
-        dof_manager.register_dof(node_id, "uy");
-    }
+    use crate::parallel::{Triplet, merge_triplets};
+    use rayon::prelude::*;
 
     let dof_count = mesh.node_count() * 2;
-    let mut triplets = TriMat::with_capacity((dof_count, dof_count), mesh.triangles().len() * 36);
-
-    for triangle in mesh.triangles() {
-        let stiffness = local_elasticity_stiffness(mesh, triangle, material, thickness)?;
-        let dofs = [
-            dof_manager.get_eq_index(triangle.nodes[0], "ux").unwrap(),
-            dof_manager.get_eq_index(triangle.nodes[0], "uy").unwrap(),
-            dof_manager.get_eq_index(triangle.nodes[1], "ux").unwrap(),
-            dof_manager.get_eq_index(triangle.nodes[1], "uy").unwrap(),
-            dof_manager.get_eq_index(triangle.nodes[2], "ux").unwrap(),
-            dof_manager.get_eq_index(triangle.nodes[2], "uy").unwrap(),
-        ];
-        for (local_row, global_row) in dofs.iter().copied().enumerate() {
-            for (local_col, global_col) in dofs.iter().copied().enumerate() {
-                triplets.add_triplet(global_row, global_col, stiffness[local_row][local_col]);
+    let triangles: Vec<_> = mesh.triangles().to_vec();
+    let element_triplets = triangles
+        .par_iter()
+        .map(|triangle| {
+            let stiffness = local_elasticity_stiffness(mesh, triangle, material, thickness)?;
+            // DOFs are registered as: node 0 -> (ux=0, uy=1), node 1 -> (ux=2, uy=3), ...
+            let dofs = [
+                triangle.nodes[0] * 2,
+                triangle.nodes[0] * 2 + 1,
+                triangle.nodes[1] * 2,
+                triangle.nodes[1] * 2 + 1,
+                triangle.nodes[2] * 2,
+                triangle.nodes[2] * 2 + 1,
+            ];
+            let mut triplets = Vec::with_capacity(36);
+            for (local_row, global_row) in dofs.iter().copied().enumerate() {
+                for (local_col, global_col) in dofs.iter().copied().enumerate() {
+                    triplets.push(Triplet {
+                        row: global_row,
+                        col: global_col,
+                        val: stiffness[local_row][local_col],
+                    });
+                }
             }
-        }
-    }
+            Ok(triplets)
+        })
+        .collect::<Result<Vec<_>, ElasticityError>>()?;
 
-    Ok(triplets.to_csr())
+    let tri = merge_triplets(dof_count, element_triplets);
+    Ok(tri.to_csr())
 }
 
 fn assemble_elasticity_3d_stiffness_matrix(
     mesh: &MeshTopology<3>,
     material: ElasticityMaterial3D,
 ) -> Result<CsMat<f64>, ElasticityError> {
-    let mut dof_manager = DOFManager::new();
-    for node_id in 0..mesh.points().len() {
-        dof_manager.register_dof(node_id, "ux");
-        dof_manager.register_dof(node_id, "uy");
-        dof_manager.register_dof(node_id, "uz");
-    }
+    use crate::parallel::{Triplet, merge_triplets};
+    use rayon::prelude::*;
 
-    let dof_count = mesh.points().len() * 3;
-    let tet_count = mesh
-        .cells()
-        .iter()
-        .filter(|cell| cell.kind == ElementKind::Tet4)
-        .count();
-    let mut triplets = TriMat::with_capacity((dof_count, dof_count), tet_count * 144);
-
+    // Check for unsupported element kinds before launching parallel work.
     for (cell_index, cell) in mesh.cells().iter().enumerate() {
         match cell.kind {
-            ElementKind::Tet4 => {
-                let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2], cell.nodes[3]];
-                let stiffness = local_tet4_elasticity_stiffness(mesh, nodes, material)?;
-                let dofs = [
-                    dof_manager.get_eq_index(nodes[0], "ux").unwrap(),
-                    dof_manager.get_eq_index(nodes[0], "uy").unwrap(),
-                    dof_manager.get_eq_index(nodes[0], "uz").unwrap(),
-                    dof_manager.get_eq_index(nodes[1], "ux").unwrap(),
-                    dof_manager.get_eq_index(nodes[1], "uy").unwrap(),
-                    dof_manager.get_eq_index(nodes[1], "uz").unwrap(),
-                    dof_manager.get_eq_index(nodes[2], "ux").unwrap(),
-                    dof_manager.get_eq_index(nodes[2], "uy").unwrap(),
-                    dof_manager.get_eq_index(nodes[2], "uz").unwrap(),
-                    dof_manager.get_eq_index(nodes[3], "ux").unwrap(),
-                    dof_manager.get_eq_index(nodes[3], "uy").unwrap(),
-                    dof_manager.get_eq_index(nodes[3], "uz").unwrap(),
-                ];
-                for (local_row, global_row) in dofs.iter().copied().enumerate() {
-                    for (local_col, global_col) in dofs.iter().copied().enumerate() {
-                        triplets.add_triplet(
-                            global_row,
-                            global_col,
-                            stiffness[local_row][local_col],
-                        );
-                    }
-                }
-            }
-            ElementKind::Line2
-            | ElementKind::Line3
-            | ElementKind::Tri3
-            | ElementKind::Tri6
-            | ElementKind::Quad4
-            | ElementKind::Quad8 => {}
             ElementKind::Hex8 | ElementKind::Hex20 | ElementKind::Tet10 => {
                 return Err(ElasticityError::UnsupportedElementKind {
                     cell_index,
                     kind: cell.kind,
                 });
             }
+            _ => {}
         }
     }
 
-    Ok(triplets.to_csr())
+    let dof_count = mesh.points().len() * 3;
+    let cells: Vec<_> = mesh.cells().to_vec();
+    let element_triplets = cells
+        .par_iter()
+        .filter_map(|cell| {
+            if cell.kind != ElementKind::Tet4 {
+                return None;
+            }
+            let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2], cell.nodes[3]];
+            let stiffness = match local_tet4_elasticity_stiffness(mesh, nodes, material) {
+                Ok(s) => s,
+                Err(e) => return Some(Err(e)),
+            };
+            // DOFs: node n -> (ux = n*3, uy = n*3+1, uz = n*3+2)
+            let dofs = [
+                nodes[0] * 3,
+                nodes[0] * 3 + 1,
+                nodes[0] * 3 + 2,
+                nodes[1] * 3,
+                nodes[1] * 3 + 1,
+                nodes[1] * 3 + 2,
+                nodes[2] * 3,
+                nodes[2] * 3 + 1,
+                nodes[2] * 3 + 2,
+                nodes[3] * 3,
+                nodes[3] * 3 + 1,
+                nodes[3] * 3 + 2,
+            ];
+            let mut triplets = Vec::with_capacity(144);
+            for (local_row, global_row) in dofs.iter().copied().enumerate() {
+                for (local_col, global_col) in dofs.iter().copied().enumerate() {
+                    triplets.push(Triplet {
+                        row: global_row,
+                        col: global_col,
+                        val: stiffness[local_row][local_col],
+                    });
+                }
+            }
+            Some(Ok(triplets))
+        })
+        .collect::<Result<Vec<_>, ElasticityError>>()?;
+
+    let tri = merge_triplets(dof_count, element_triplets);
+    Ok(tri.to_csr())
 }
 
 pub fn local_elasticity_stiffness(
@@ -1627,4 +1747,305 @@ fn inverse_3(matrix: [[f64; 3]; 3], determinant: f64) -> [[f64; 3]; 3] {
             (matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0]) * inv_det,
         ],
     ]
+}
+
+/// Recovers element-centroid stress and strain tensors for a 2D Tri3 mesh.
+///
+/// Uses the element B-matrix (strain-displacement) and material D-matrix
+/// (constitutive) to compute `sigma = D * B * u` at each element centroid.
+pub fn recover_stress_2d(
+    mesh: &Mesh,
+    material: &ElasticityMaterial,
+    displacements: &[[f64; 2]],
+) -> (
+    Vec<StressTensor2D>,
+    Vec<StrainTensor2D>,
+    Vec<StressTensor2D>,
+) {
+    let d = constitutive_matrix(*material);
+    let node_count = mesh.node_count();
+    let triangles = mesh.triangles();
+    let n_elem = triangles.len();
+
+    let mut element_stress = Vec::with_capacity(n_elem);
+    let mut element_strain = Vec::with_capacity(n_elem);
+
+    // Accumulators for nodal averaging.
+    let mut nodal_stress_sum = vec![[0.0f64; 3]; node_count];
+    let mut nodal_count = vec![0usize; node_count];
+
+    for tri in triangles {
+        let [n0, n1, n2] = tri.nodes;
+        let p0 = mesh.points()[n0];
+        let p1 = mesh.points()[n1];
+        let p2 = mesh.points()[n2];
+
+        let (x1, y1) = (p0.x, p0.y);
+        let (x2, y2) = (p1.x, p1.y);
+        let (x3, y3) = (p2.x, p2.y);
+
+        let twice_area = (x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1);
+        // Skip degenerate elements silently.
+        if twice_area.abs() <= f64::EPSILON {
+            element_stress.push(StressTensor2D::from_components(0.0, 0.0, 0.0));
+            element_strain.push(StrainTensor2D {
+                eps_xx: 0.0,
+                eps_yy: 0.0,
+                gamma_xy: 0.0,
+            });
+            continue;
+        }
+
+        let b1 = y2 - y3;
+        let b2 = y3 - y1;
+        let b3 = y1 - y2;
+        let c1 = x3 - x2;
+        let c2 = x1 - x3;
+        let c3 = x2 - x1;
+
+        // B-matrix rows: [eps_xx, eps_yy, gamma_xy]
+        // B = (1 / twice_area) * [[b1, 0, b2, 0, b3, 0],
+        //                          [0, c1, 0, c2, 0, c3],
+        //                          [c1, b1, c2, b2, c3, b3]]
+        let inv2a = 1.0 / twice_area;
+        let b_mat = [
+            [b1 * inv2a, 0.0, b2 * inv2a, 0.0, b3 * inv2a, 0.0],
+            [0.0, c1 * inv2a, 0.0, c2 * inv2a, 0.0, c3 * inv2a],
+            [
+                c1 * inv2a,
+                b1 * inv2a,
+                c2 * inv2a,
+                b2 * inv2a,
+                c3 * inv2a,
+                b3 * inv2a,
+            ],
+        ];
+
+        // Element displacement vector: [ux1, uy1, ux2, uy2, ux3, uy3]
+        let u_e = [
+            displacements[n0][0],
+            displacements[n0][1],
+            displacements[n1][0],
+            displacements[n1][1],
+            displacements[n2][0],
+            displacements[n2][1],
+        ];
+
+        // Strain: eps = B * u_e  (3-vector)
+        let mut eps = [0.0f64; 3];
+        for (row, b_row) in b_mat.iter().enumerate() {
+            for (col, &b_val) in b_row.iter().enumerate() {
+                eps[row] += b_val * u_e[col];
+            }
+        }
+
+        // Stress: sigma = D * eps  (3-vector)
+        let mut sigma = [0.0f64; 3];
+        for (row, d_row) in d.iter().enumerate() {
+            for (col, &d_val) in d_row.iter().enumerate() {
+                sigma[row] += d_val * eps[col];
+            }
+        }
+
+        element_strain.push(StrainTensor2D {
+            eps_xx: eps[0],
+            eps_yy: eps[1],
+            gamma_xy: eps[2],
+        });
+        element_stress.push(StressTensor2D::from_components(
+            sigma[0], sigma[1], sigma[2],
+        ));
+
+        // Accumulate for nodal averaging.
+        for &node in &[n0, n1, n2] {
+            nodal_stress_sum[node][0] += sigma[0];
+            nodal_stress_sum[node][1] += sigma[1];
+            nodal_stress_sum[node][2] += sigma[2];
+            nodal_count[node] += 1;
+        }
+    }
+
+    // Produce nodal-averaged stress.
+    let nodal_stress: Vec<StressTensor2D> = (0..node_count)
+        .map(|node| {
+            let count = nodal_count[node] as f64;
+            if count > 0.0 {
+                StressTensor2D::from_components(
+                    nodal_stress_sum[node][0] / count,
+                    nodal_stress_sum[node][1] / count,
+                    nodal_stress_sum[node][2] / count,
+                )
+            } else {
+                StressTensor2D::from_components(0.0, 0.0, 0.0)
+            }
+        })
+        .collect();
+
+    (element_stress, element_strain, nodal_stress)
+}
+
+/// Recovers element-centroid stress and strain tensors for a 3D Tet4 mesh.
+///
+/// Uses the element B-matrix (strain-displacement) and material D-matrix
+/// (constitutive) to compute `sigma = D * B * u` at each element centroid.
+pub fn recover_stress_3d(
+    mesh: &MeshTopology<3>,
+    node_coords: &[Point3],
+    material: &ElasticityMaterial3D,
+    displacements: &[[f64; 3]],
+) -> (
+    Vec<StressTensor3D>,
+    Vec<StrainTensor3D>,
+    Vec<StressTensor3D>,
+) {
+    let d_mat = constitutive_matrix_3d(*material);
+    let node_count = node_coords.len();
+    let cells = mesh.cells();
+
+    // Collect Tet4 elements.
+    let tet4_cells: Vec<_> = cells
+        .iter()
+        .filter(|cell| cell.kind == ElementKind::Tet4)
+        .collect();
+    let n_elem = tet4_cells.len();
+
+    let mut element_stress = Vec::with_capacity(n_elem);
+    let mut element_strain = Vec::with_capacity(n_elem);
+
+    // Accumulators for nodal averaging.
+    let mut nodal_stress_sum = vec![[0.0f64; 6]; node_count];
+    let mut nodal_count = vec![0usize; node_count];
+
+    for cell in &tet4_cells {
+        let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2], cell.nodes[3]];
+        let a = node_coords[nodes[0]];
+        let b = node_coords[nodes[1]];
+        let c = node_coords[nodes[2]];
+        let d_node = node_coords[nodes[3]];
+
+        let jacobian = [
+            [
+                b.coords[0] - a.coords[0],
+                c.coords[0] - a.coords[0],
+                d_node.coords[0] - a.coords[0],
+            ],
+            [
+                b.coords[1] - a.coords[1],
+                c.coords[1] - a.coords[1],
+                d_node.coords[1] - a.coords[1],
+            ],
+            [
+                b.coords[2] - a.coords[2],
+                c.coords[2] - a.coords[2],
+                d_node.coords[2] - a.coords[2],
+            ],
+        ];
+        let determinant = determinant_3(jacobian);
+        let volume = determinant.abs() / 6.0;
+
+        // Skip degenerate elements silently.
+        if volume <= f64::EPSILON {
+            element_stress.push(StressTensor3D::from_components(
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ));
+            element_strain.push(StrainTensor3D {
+                eps_xx: 0.0,
+                eps_yy: 0.0,
+                eps_zz: 0.0,
+                gamma_xy: 0.0,
+                gamma_yz: 0.0,
+                gamma_xz: 0.0,
+            });
+            continue;
+        }
+
+        let inverse = inverse_3(jacobian, determinant);
+        let gradients = [
+            [
+                -(inverse[0][0] + inverse[1][0] + inverse[2][0]),
+                -(inverse[0][1] + inverse[1][1] + inverse[2][1]),
+                -(inverse[0][2] + inverse[1][2] + inverse[2][2]),
+            ],
+            inverse[0],
+            inverse[1],
+            inverse[2],
+        ];
+
+        // Build B-matrix (6 x 12) using the same layout as strain_displacement_matrix_3d.
+        let b_mat = strain_displacement_matrix_3d(gradients);
+
+        // Element displacement vector: [ux0, uy0, uz0, ux1, uy1, uz1, ...]
+        let u_e = [
+            displacements[nodes[0]][0],
+            displacements[nodes[0]][1],
+            displacements[nodes[0]][2],
+            displacements[nodes[1]][0],
+            displacements[nodes[1]][1],
+            displacements[nodes[1]][2],
+            displacements[nodes[2]][0],
+            displacements[nodes[2]][1],
+            displacements[nodes[2]][2],
+            displacements[nodes[3]][0],
+            displacements[nodes[3]][1],
+            displacements[nodes[3]][2],
+        ];
+
+        // Strain: eps = B * u_e  (6-vector)
+        let mut eps = [0.0f64; 6];
+        for (row, b_row) in b_mat.iter().enumerate() {
+            for (col, &b_val) in b_row.iter().enumerate() {
+                eps[row] += b_val * u_e[col];
+            }
+        }
+
+        // Stress: sigma = D * eps  (6-vector)
+        let mut sigma = [0.0f64; 6];
+        for (row, d_row) in d_mat.iter().enumerate() {
+            for (col, &d_val) in d_row.iter().enumerate() {
+                sigma[row] += d_val * eps[col];
+            }
+        }
+
+        element_strain.push(StrainTensor3D {
+            eps_xx: eps[0],
+            eps_yy: eps[1],
+            eps_zz: eps[2],
+            gamma_xy: eps[3],
+            gamma_yz: eps[4],
+            gamma_xz: eps[5],
+        });
+        element_stress.push(StressTensor3D::from_components(
+            sigma[0], sigma[1], sigma[2], sigma[3], sigma[4], sigma[5],
+        ));
+
+        // Accumulate for nodal averaging.
+        for &node in &nodes {
+            for k in 0..6 {
+                nodal_stress_sum[node][k] += sigma[k];
+            }
+            nodal_count[node] += 1;
+        }
+    }
+
+    // Produce nodal-averaged stress.
+    let nodal_stress: Vec<StressTensor3D> = (0..node_count)
+        .map(|node| {
+            let count = nodal_count[node] as f64;
+            if count > 0.0 {
+                let s = nodal_stress_sum[node];
+                StressTensor3D::from_components(
+                    s[0] / count,
+                    s[1] / count,
+                    s[2] / count,
+                    s[3] / count,
+                    s[4] / count,
+                    s[5] / count,
+                )
+            } else {
+                StressTensor3D::from_components(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+            }
+        })
+        .collect();
+
+    (element_stress, element_strain, nodal_stress)
 }

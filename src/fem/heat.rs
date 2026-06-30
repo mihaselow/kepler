@@ -280,19 +280,30 @@ fn active_node_map(node_count: usize, active_nodes: &[NodeId]) -> Vec<Option<usi
 }
 
 fn assemble_heat_stiffness(mesh: &Mesh, conductivity: f64) -> Result<CsMat<f64>, PoissonError> {
-    let mut triplets = TriMat::with_capacity(
-        (mesh.node_count(), mesh.node_count()),
-        mesh.triangles().len() * 9,
-    );
-    for triangle in mesh.triangles() {
-        let stiffness = local_stiffness(mesh, triangle, conductivity)?;
-        for (local_row, global_row) in triangle.nodes.iter().copied().enumerate() {
-            for (local_col, global_col) in triangle.nodes.iter().copied().enumerate() {
-                triplets.add_triplet(global_row, global_col, stiffness[local_row][local_col]);
+    use crate::parallel::{Triplet, merge_triplets};
+    use rayon::prelude::*;
+
+    let triangles: Vec<_> = mesh.triangles().to_vec();
+    let element_triplets = triangles
+        .par_iter()
+        .map(|triangle| {
+            let stiffness = local_stiffness(mesh, triangle, conductivity)?;
+            let mut triplets = Vec::with_capacity(9);
+            for (local_row, global_row) in triangle.nodes.iter().copied().enumerate() {
+                for (local_col, global_col) in triangle.nodes.iter().copied().enumerate() {
+                    triplets.push(Triplet {
+                        row: global_row,
+                        col: global_col,
+                        val: stiffness[local_row][local_col],
+                    });
+                }
             }
-        }
-    }
-    Ok(triplets.to_csr())
+            Ok(triplets)
+        })
+        .collect::<Result<Vec<_>, PoissonError>>()?;
+
+    let tri = merge_triplets(mesh.node_count(), element_triplets);
+    Ok(tri.to_csr())
 }
 
 fn assemble_lumped_heat_mass(mesh: &Mesh, volumetric_heat_capacity: f64) -> CsMat<f64> {

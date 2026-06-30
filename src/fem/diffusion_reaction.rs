@@ -534,25 +534,32 @@ fn assemble_diffusion_reaction_operator(
     diffusivity: f64,
     reaction_rate: f64,
 ) -> Result<CsMat<f64>, DiffusionReactionError> {
-    let mut triplets = TriMat::with_capacity(
-        (mesh.node_count(), mesh.node_count()),
-        mesh.triangles().len() * 9,
-    );
-    for triangle in mesh.triangles() {
-        let stiffness =
-            local_stiffness(mesh, triangle, diffusivity).map_err(map_poisson_source_error)?;
-        let reaction = local_tri3_reaction(mesh, triangle, reaction_rate);
-        for (local_row, global_row) in triangle.nodes.iter().copied().enumerate() {
-            for (local_col, global_col) in triangle.nodes.iter().copied().enumerate() {
-                triplets.add_triplet(
-                    global_row,
-                    global_col,
-                    stiffness[local_row][local_col] + reaction[local_row][local_col],
-                );
+    use crate::parallel::{Triplet, merge_triplets};
+    use rayon::prelude::*;
+
+    let triangles: Vec<_> = mesh.triangles().to_vec();
+    let element_triplets = triangles
+        .par_iter()
+        .map(|triangle| {
+            let stiffness =
+                local_stiffness(mesh, triangle, diffusivity).map_err(map_poisson_source_error)?;
+            let reaction = local_tri3_reaction(mesh, triangle, reaction_rate);
+            let mut triplets = Vec::with_capacity(9);
+            for (local_row, global_row) in triangle.nodes.iter().copied().enumerate() {
+                for (local_col, global_col) in triangle.nodes.iter().copied().enumerate() {
+                    triplets.push(Triplet {
+                        row: global_row,
+                        col: global_col,
+                        val: stiffness[local_row][local_col] + reaction[local_row][local_col],
+                    });
+                }
             }
-        }
-    }
-    Ok(triplets.to_csr())
+            Ok(triplets)
+        })
+        .collect::<Result<Vec<_>, DiffusionReactionError>>()?;
+
+    let tri = merge_triplets(mesh.node_count(), element_triplets);
+    Ok(tri.to_csr())
 }
 
 fn assemble_diffusion_reaction_3d_operator(
@@ -560,39 +567,55 @@ fn assemble_diffusion_reaction_3d_operator(
     diffusivity: f64,
     reaction_rate: f64,
 ) -> Result<CsMat<f64>, DiffusionReactionError> {
-    let mut triplets = TriMat::new((mesh.points().len(), mesh.points().len()));
+    use crate::parallel::{Triplet, merge_triplets};
+    use rayon::prelude::*;
+
+    // Check for unsupported element kinds before launching parallel work.
     for (cell_index, cell) in mesh.cells().iter().enumerate() {
         match cell.kind {
-            ElementKind::Tet4 => {
-                let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2], cell.nodes[3]];
-                let stiffness = local_tet4_stiffness(mesh, nodes, diffusivity)
-                    .map_err(map_poisson_source_error)?;
-                let reaction = local_tet4_reaction(mesh, nodes, reaction_rate);
-                for (local_row, global_row) in nodes.iter().copied().enumerate() {
-                    for (local_col, global_col) in nodes.iter().copied().enumerate() {
-                        triplets.add_triplet(
-                            global_row,
-                            global_col,
-                            stiffness[local_row][local_col] + reaction[local_row][local_col],
-                        );
-                    }
-                }
-            }
-            ElementKind::Line2
-            | ElementKind::Line3
-            | ElementKind::Tri3
-            | ElementKind::Tri6
-            | ElementKind::Quad4
-            | ElementKind::Quad8 => {}
             ElementKind::Hex8 | ElementKind::Hex20 | ElementKind::Tet10 => {
                 return Err(DiffusionReactionError::UnsupportedElementKind {
                     cell_index,
                     kind: cell.kind,
                 });
             }
+            _ => {}
         }
     }
-    Ok(triplets.to_csr())
+
+    let cells: Vec<_> = mesh.cells().to_vec();
+    let n_points = mesh.points().len();
+    let element_triplets = cells
+        .par_iter()
+        .enumerate()
+        .filter_map(|(_i, cell)| {
+            if cell.kind != ElementKind::Tet4 {
+                return None;
+            }
+            let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2], cell.nodes[3]];
+            let stiffness = match local_tet4_stiffness(mesh, nodes, diffusivity)
+                .map_err(map_poisson_source_error)
+            {
+                Ok(s) => s,
+                Err(e) => return Some(Err(e)),
+            };
+            let reaction = local_tet4_reaction(mesh, nodes, reaction_rate);
+            let mut triplets = Vec::with_capacity(16);
+            for (local_row, global_row) in nodes.iter().copied().enumerate() {
+                for (local_col, global_col) in nodes.iter().copied().enumerate() {
+                    triplets.push(Triplet {
+                        row: global_row,
+                        col: global_col,
+                        val: stiffness[local_row][local_col] + reaction[local_row][local_col],
+                    });
+                }
+            }
+            Some(Ok(triplets))
+        })
+        .collect::<Result<Vec<_>, DiffusionReactionError>>()?;
+
+    let tri = merge_triplets(n_points, element_triplets);
+    Ok(tri.to_csr())
 }
 
 fn assemble_lumped_mass(mesh: &Mesh, storage_coefficient: f64) -> CsMat<f64> {

@@ -1,14 +1,37 @@
 use kepler::{
-    read_gmsh_file, write_vtk_legacy_file, ElementKind, ImportedMesh, Mesh, MeshTopology,
-    Point2, SolverOptions, VtkScalarField,
-    // Poisson
-    PoissonProblem, PoissonProblem3D, solve_poisson, solve_poisson_3d,
+    DisplacementComponent,
+    DisplacementComponent3D,
+    DisplacementConstraint,
+    DisplacementConstraint3D,
+    ElasticityMaterial,
+    ElasticityMaterial3D,
+    ElasticityModel,
     // Elasticity
-    ElasticityProblem, ElasticityProblem3D, ElasticityMaterial, ElasticityMaterial3D,
-    ElasticityModel, DisplacementComponent, DisplacementComponent3D, DisplacementConstraint,
-    DisplacementConstraint3D, NodalForce, NodalForce3D, solve_elasticity, solve_elasticity_3d,
+    ElasticityProblem,
+    ElasticityProblem3D,
+    ElementKind,
+    ImportedMesh,
+    Mesh,
+    MeshTopology,
     // Modal
-    ModalProblem, ModalProblem3D, solve_modal, solve_modal_3d,
+    ModalProblem,
+    ModalProblem3D,
+    NodalForce,
+    NodalForce3D,
+    Point2,
+    // Poisson
+    PoissonProblem,
+    PoissonProblem3D,
+    SolverOptions,
+    VtkScalarField,
+    read_gmsh_file,
+    solve_elasticity,
+    solve_elasticity_3d,
+    solve_modal,
+    solve_modal_3d,
+    solve_poisson,
+    solve_poisson_3d,
+    write_vtk_legacy_file,
 };
 use std::collections::BTreeSet;
 use std::env;
@@ -17,7 +40,9 @@ use std::process;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 4 {
-        eprintln!("Usage: cargo run --example solve_gmsh <mesh.msh> <poisson|elasticity|modal> <output.vtk>");
+        eprintln!(
+            "Usage: cargo run --example solve_gmsh <mesh.msh> <poisson|elasticity|modal> <output.vtk>"
+        );
         process::exit(1);
     }
 
@@ -65,12 +90,18 @@ fn solve_2d(
     let mut triangles = Vec::new();
     for cell in topology.cells() {
         if cell.kind == ElementKind::Tri3 {
-            triangles.push(kepler::Tri3::new([cell.nodes[0], cell.nodes[1], cell.nodes[2]]));
+            triangles.push(kepler::Tri3::new([
+                cell.nodes[0],
+                cell.nodes[1],
+                cell.nodes[2],
+            ]));
         }
     }
 
     if triangles.is_empty() {
-        return Err("No Tri3 elements found in the 2D mesh (Kepler's 2D solvers only support Tri3)".into());
+        return Err(
+            "No Tri3 elements found in the 2D mesh (Kepler's 2D solvers only support Tri3)".into(),
+        );
     }
 
     let mesh = Mesh::new(points, triangles)?;
@@ -204,7 +235,10 @@ fn solve_2d(
                     .iter()
                     .map(|d| (d[0].powi(2) + d[1].powi(2)).sqrt())
                     .collect();
-                scalar_fields.push(VtkScalarField::new(format!("mode_{}_amplitude", i + 1), mag));
+                scalar_fields.push(VtkScalarField::new(
+                    format!("mode_{}_amplitude", i + 1),
+                    mag,
+                ));
             }
         }
         _ => return Err(format!("Unsupported physics model: {physics}").into()),
@@ -359,7 +393,10 @@ fn solve_3d(
                     .iter()
                     .map(|d| (d[0].powi(2) + d[1].powi(2) + d[2].powi(2)).sqrt())
                     .collect();
-                scalar_fields.push(VtkScalarField::new(format!("mode_{}_amplitude", i + 1), mag));
+                scalar_fields.push(VtkScalarField::new(
+                    format!("mode_{}_amplitude", i + 1),
+                    mag,
+                ));
             }
         }
         _ => return Err(format!("Unsupported physics model: {physics}").into()),

@@ -111,9 +111,8 @@ fn generate_cube_tet4(dir: &Path, n: usize, suffix: &str) {
     writeln!(file, "$EndNodes").unwrap();
 
     // Helper to get node index (1-based)
-    let get_node = |i: usize, j: usize, k: usize| -> usize {
-        1 + i + j * (n + 1) + k * (n + 1) * (n + 1)
-    };
+    let get_node =
+        |i: usize, j: usize, k: usize| -> usize { 1 + i + j * (n + 1) + k * (n + 1) * (n + 1) };
 
     let mut elements = Vec::new();
     let mut el_id = 1;
@@ -199,9 +198,8 @@ fn generate_cube_hex8(dir: &Path, n: usize, suffix: &str) {
     }
     writeln!(file, "$EndNodes").unwrap();
 
-    let get_node = |i: usize, j: usize, k: usize| -> usize {
-        1 + i + j * (n + 1) + k * (n + 1) * (n + 1)
-    };
+    let get_node =
+        |i: usize, j: usize, k: usize| -> usize { 1 + i + j * (n + 1) + k * (n + 1) * (n + 1) };
 
     let mut elements = Vec::new();
     let mut el_id = 1;
@@ -252,7 +250,7 @@ fn generate_cube_hex8(dir: &Path, n: usize, suffix: &str) {
 
 fn generate_square_custom_mesh(dir: &Path) {
     let n = 22;
-    
+
     // Write square_fine.mesh
     let mut file_mesh = File::create(dir.join("square_fine.mesh")).unwrap();
     writeln!(file_mesh, "nodes").unwrap();
@@ -264,7 +262,7 @@ fn generate_square_custom_mesh(dir: &Path) {
             writeln!(file_mesh, "{} {} {}", id, x, y).unwrap();
         }
     }
-    
+
     writeln!(file_mesh, "\ntriangles").unwrap();
     let mut el_id = 0;
     for r in 0..n {
@@ -273,21 +271,33 @@ fn generate_square_custom_mesh(dir: &Path) {
             let n1 = n0 + 1;
             let n2 = (r + 1) * (n + 1) + c;
             let n3 = n2 + 1;
-            
+
             writeln!(file_mesh, "{} {} {} {}", el_id, n0, n1, n3).unwrap();
             el_id += 1;
             writeln!(file_mesh, "{} {} {} {}", el_id, n0, n3, n2).unwrap();
             el_id += 1;
         }
     }
-    
+
     // Write square_fine.params
     let mut file_params = File::create(dir.join("square_fine.params")).unwrap();
     writeln!(file_params, "conductivity 1.0\nsource constant 100.0").unwrap();
-    writeln!(file_params, "solver max_iterations 1000\nsolver tolerance 1e-8").unwrap();
-    writeln!(file_params, "solver backend conjugate_gradient\nsolver preconditioner jacobi").unwrap();
-    writeln!(file_params, "solver record_residual_history false\n\ndirichlet").unwrap();
-    
+    writeln!(
+        file_params,
+        "solver max_iterations 1000\nsolver tolerance 1e-8"
+    )
+    .unwrap();
+    writeln!(
+        file_params,
+        "solver backend conjugate_gradient\nsolver preconditioner jacobi"
+    )
+    .unwrap();
+    writeln!(
+        file_params,
+        "solver record_residual_history false\n\ndirichlet"
+    )
+    .unwrap();
+
     // Collect and write boundary nodes
     let mut boundary_nodes = std::collections::BTreeSet::new();
     for c in 0..=n {

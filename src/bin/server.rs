@@ -608,6 +608,7 @@ impl TryFrom<SolverOptionsRequest> for LinearSolverOptions {
             preconditioner: match value.preconditioner.as_deref() {
                 None | Some("none") => PreconditionerKind::None,
                 Some("jacobi") => PreconditionerKind::Jacobi,
+                Some("amg") => PreconditionerKind::Amg,
                 Some(value) => return Err(format!("unsupported preconditioner '{value}'")),
             },
             record_residual_history: value.record_residual_history.unwrap_or(false),
@@ -787,6 +788,7 @@ impl From<SolverDiagnostics> for DiagnosticsResponse {
             preconditioner: match value.preconditioner {
                 PreconditionerKind::None => "none",
                 PreconditionerKind::Jacobi => "jacobi",
+                PreconditionerKind::Amg => "amg",
             },
             converged: value.converged,
             initial_residual_norm: value.initial_residual_norm,

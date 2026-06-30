@@ -2,7 +2,7 @@ use kepler::{
     ConfiguredLinearSolver, LinalgError, LinearSolver, LinearSolverBackend, LinearSolverOptions,
     NewmarkSolverOptions, NonlinearSolverOptions, NonlinearSystem, PreconditionerKind,
     TransientSolverOptions, analyze_matrix, newton_solve, solve_harmonic_response,
-    solve_linear_system, solve_linear_transient, solve_newmark_transient,
+    solve_lanczos_modes, solve_linear_system, solve_linear_transient, solve_newmark_transient,
 };
 use sprs::TriMat;
 
@@ -72,6 +72,35 @@ fn linear_solver_uses_jacobi_preconditioned_cg_with_diagnostics() {
     );
     assert!(result.diagnostics.converged);
     assert!(!result.diagnostics.residual_history.is_empty());
+}
+
+#[test]
+fn linear_solver_uses_amg_preconditioned_cg_with_diagnostics() {
+    let size = 10;
+    let mut entries = Vec::new();
+    for i in 0..size {
+        entries.push((i, i, 2.0));
+        if i > 0 {
+            entries.push((i, i - 1, -1.0));
+            entries.push((i - 1, i, -1.0));
+        }
+    }
+    let matrix = csr_matrix(size, &entries);
+    let mut rhs = vec![0.0; size];
+    rhs[0] = 1.0;
+    rhs[size - 1] = 1.0;
+
+    let solver = ConfiguredLinearSolver::new(LinearSolverOptions {
+        preconditioner: PreconditionerKind::Amg,
+        record_residual_history: true,
+        ..LinearSolverOptions::default()
+    });
+
+    let result = solver.solve(&matrix, &rhs).unwrap();
+
+    assert_eq!(result.diagnostics.preconditioner, PreconditionerKind::Amg);
+    assert!(result.diagnostics.converged);
+    assert!(result.diagnostics.iterations < size);
 }
 
 #[test]
@@ -350,4 +379,37 @@ fn test_solve_harmonic_response_1dof() {
 
     assert_close(u_real[0], 16.25 / 12.8125);
     assert_close(u_imag[0], 7.5 / 12.8125);
+}
+
+#[test]
+fn test_solve_lanczos_modes_generalized() {
+    let stiffness = csr_matrix(2, &[(0, 0, 4.0), (0, 1, -1.0), (1, 0, -1.0), (1, 1, 3.0)]);
+    let mass_diag = [2.0, 1.0];
+
+    // Request 2 modes.
+    let result = solve_lanczos_modes(
+        &stiffness, &mass_diag, 2, 0.1,   // spectral shift
+        20,    // max iterations
+        1e-10, // tolerance
+    )
+    .unwrap();
+
+    let lambda1_expected = (10.0 - 12.0_f64.sqrt()) / 4.0;
+    let lambda2_expected = (10.0 + 12.0_f64.sqrt()) / 4.0;
+
+    assert_eq!(result.eigenvalues.len(), 2);
+    assert_close(result.eigenvalues[0], lambda1_expected);
+    assert_close(result.eigenvalues[1], lambda2_expected);
+
+    // Verify M-orthonormalisation: v_i^T M v_j = \delta_{ij}
+    let v0 = &result.eigenvectors[0];
+    let v1 = &result.eigenvectors[1];
+
+    let dot00 = v0[0] * v0[0] * mass_diag[0] + v0[1] * v0[1] * mass_diag[1];
+    let dot11 = v1[0] * v1[0] * mass_diag[0] + v1[1] * v1[1] * mass_diag[1];
+    let dot01 = v0[0] * v1[0] * mass_diag[0] + v0[1] * v1[1] * mass_diag[1];
+
+    assert_close(dot00, 1.0);
+    assert_close(dot11, 1.0);
+    assert!(dot01.abs() <= 1e-10);
 }
