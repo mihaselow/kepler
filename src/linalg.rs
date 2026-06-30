@@ -21,6 +21,7 @@ pub enum LinearSolverBackend {
     ConjugateGradient,
     Gmres,
     DenseDirect,
+    SparseLdl,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -317,6 +318,7 @@ pub fn solve_linear_system(
         }
         LinearSolverBackend::Gmres => gmres_with_options(matrix, rhs, options),
         LinearSolverBackend::DenseDirect => dense_direct_solve(matrix, rhs, options),
+        LinearSolverBackend::SparseLdl => sparse_ldl_solve(matrix, rhs, options),
     }
 }
 
@@ -648,6 +650,36 @@ fn dense_direct_solve(
         values,
         diagnostics: SolverDiagnostics {
             backend: LinearSolverBackend::DenseDirect,
+            preconditioner: PreconditionerKind::None,
+            converged: residual <= options.tolerance.max(1.0e-12),
+            iterations: 1,
+            initial_residual_norm: initial_residual,
+            residual_norm: residual,
+            residual_history: if options.record_residual_history {
+                vec![initial_residual, residual]
+            } else {
+                Vec::new()
+            },
+        },
+    })
+}
+
+fn sparse_ldl_solve(
+    matrix: &CsMat<f64>,
+    rhs: &[f64],
+    options: LinearSolverOptions,
+) -> Result<LinearSolverResult, LinalgError> {
+    let initial_residual = norm(rhs);
+    let ldl = sprs_ldl::Ldl::default();
+    let system = ldl
+        .numeric(matrix.view())
+        .map_err(|_| LinalgError::SingularMatrix { pivot: 0 })?;
+    let values = system.solve(rhs);
+    let residual = residual_norm(matrix, &values, rhs);
+    Ok(LinearSolverResult {
+        values,
+        diagnostics: SolverDiagnostics {
+            backend: LinearSolverBackend::SparseLdl,
             preconditioner: PreconditionerKind::None,
             converged: residual <= options.tolerance.max(1.0e-12),
             iterations: 1,

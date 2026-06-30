@@ -30,6 +30,29 @@ fn linear_solver_selects_dense_direct_backend() {
 }
 
 #[test]
+fn linear_solver_selects_sparse_ldl_backend() {
+    let matrix = csr_matrix(2, &[(0, 0, 2.0), (0, 1, 1.0), (1, 0, 1.0), (1, 1, 3.0)]);
+    let rhs = [1.0, 2.0];
+
+    let result = solve_linear_system(
+        &matrix,
+        &rhs,
+        LinearSolverOptions {
+            backend: LinearSolverBackend::SparseLdl,
+            record_residual_history: true,
+            ..LinearSolverOptions::default()
+        },
+    )
+    .unwrap();
+
+    assert_close(result.values[0], 0.2);
+    assert_close(result.values[1], 0.6);
+    assert_eq!(result.diagnostics.backend, LinearSolverBackend::SparseLdl);
+    assert!(result.diagnostics.converged);
+    assert_eq!(result.diagnostics.residual_history.len(), 2);
+}
+
+#[test]
 fn linear_solver_uses_jacobi_preconditioned_cg_with_diagnostics() {
     let matrix = csr_matrix(2, &[(0, 0, 4.0), (0, 1, 1.0), (1, 0, 1.0), (1, 1, 3.0)]);
     let rhs = [1.0, 2.0];

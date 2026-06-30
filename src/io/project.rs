@@ -91,6 +91,7 @@ pub enum ProjectLinearSolverBackend {
     ConjugateGradient,
     Gmres,
     DenseDirect,
+    SparseLdl,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -189,6 +190,7 @@ impl From<LinearSolverBackend> for ProjectLinearSolverBackend {
             LinearSolverBackend::ConjugateGradient => Self::ConjugateGradient,
             LinearSolverBackend::Gmres => Self::Gmres,
             LinearSolverBackend::DenseDirect => Self::DenseDirect,
+            LinearSolverBackend::SparseLdl => Self::SparseLdl,
         }
     }
 }
@@ -199,6 +201,7 @@ impl From<ProjectLinearSolverBackend> for LinearSolverBackend {
             ProjectLinearSolverBackend::ConjugateGradient => Self::ConjugateGradient,
             ProjectLinearSolverBackend::Gmres => Self::Gmres,
             ProjectLinearSolverBackend::DenseDirect => Self::DenseDirect,
+            ProjectLinearSolverBackend::SparseLdl => Self::SparseLdl,
         }
     }
 }

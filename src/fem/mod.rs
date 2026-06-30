@@ -1,3 +1,4 @@
+pub mod constraint;
 pub mod diffusion_reaction;
 pub mod dof;
 pub mod elasticity;

@@ -602,6 +602,7 @@ impl TryFrom<SolverOptionsRequest> for LinearSolverOptions {
                 }
                 Some("gmres") => LinearSolverBackend::Gmres,
                 Some("dense_direct") => LinearSolverBackend::DenseDirect,
+                Some("sparse_ldl") => LinearSolverBackend::SparseLdl,
                 Some(value) => return Err(format!("unsupported solver backend '{value}'")),
             },
             preconditioner: match value.preconditioner.as_deref() {
@@ -781,6 +782,7 @@ impl From<SolverDiagnostics> for DiagnosticsResponse {
                 LinearSolverBackend::ConjugateGradient => "conjugate_gradient",
                 LinearSolverBackend::Gmres => "gmres",
                 LinearSolverBackend::DenseDirect => "dense_direct",
+                LinearSolverBackend::SparseLdl => "sparse_ldl",
             },
             preconditioner: match value.preconditioner {
                 PreconditionerKind::None => "none",

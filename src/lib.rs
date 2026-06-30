@@ -14,6 +14,9 @@ pub use condition::{
     Condition, ConditionError, ConditionId, ConditionKind, ConditionSet, ConditionSignature,
     ResolvedCondition, ResolvedConditionSet,
 };
+pub use fem::constraint::{
+    MPCConstraint, MPCTerm, apply_mpc_lagrange, apply_mpc_penalty, split_lagrange_solution,
+};
 pub use fem::diffusion_reaction::{
     DiffusionReactionError, DiffusionReactionProblem, DiffusionReactionProblem3D,
     DiffusionReactionResult, DiffusionReactionSolverResult, TransientDiffusionReactionProblem,
