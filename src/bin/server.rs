@@ -1019,10 +1019,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         let body = body_json(response).await;
-        assert_eq!(body["status"], json!("valid"));
-        assert_eq!(body["job_count"], json!(1));
-        assert_eq!(body["jobs"][0]["id"], json!("solve-square"));
-        assert_eq!(body["jobs"][0]["physics"], json!("poisson"));
+        assert_eq!(body, expected_project_validate_response());
     }
 
     #[tokio::test]
@@ -1041,13 +1038,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         let body = body_json(response).await;
-        assert_eq!(body["status"], json!("completed"));
-        assert_eq!(body["jobs"][0]["status"], json!("completed"));
-        assert_eq!(body["jobs"][0]["values"][4], json!(1.0 / 12.0));
-        assert_eq!(
-            body["jobs"][0]["diagnostics"]["backend"],
-            json!("dense_direct")
-        );
+        assert_eq!(body, expected_project_solve_response());
     }
 
     #[tokio::test]
@@ -1069,13 +1060,7 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body = body_json(response).await;
-        assert_eq!(body["code"], json!("bad_request"));
-        assert!(
-            body["error"]
-                .as_str()
-                .unwrap()
-                .contains("schema version 99")
-        );
+        assert_eq!(body, expected_bad_schema_error_response());
     }
 
     #[tokio::test]
@@ -1101,10 +1086,7 @@ mod tests {
 
         let result_body = poll_async_result(app, job_id).await;
         assert_eq!(result_body["status"], json!("completed"));
-        assert_eq!(
-            result_body["result"]["jobs"][0]["values"][4],
-            json!(1.0 / 12.0)
-        );
+        assert_eq!(result_body["result"], expected_project_solve_response());
         assert!(
             result_body["logs"]
                 .as_array()
@@ -1229,14 +1211,7 @@ mod tests {
                     .method("POST")
                     .uri("/projects/artifacts")
                     .header("content-type", "application/json")
-                    .body(Body::from(
-                        json!({
-                            "kind": "mesh",
-                            "name": "triangle.mesh",
-                            "content": triangle_mesh_text()
-                        })
-                        .to_string(),
-                    ))
+                    .body(Body::from(mesh_artifact_upload().to_string()))
                     .unwrap(),
             )
             .await
@@ -1360,6 +1335,34 @@ mod tests {
         serde_json::from_slice(&body).unwrap()
     }
 
+    fn expected_project_validate_response() -> Value {
+        serde_json::from_str(include_str!(
+            "../../examples/data/rest_project_validate_response.json"
+        ))
+        .unwrap()
+    }
+
+    fn expected_project_solve_response() -> Value {
+        serde_json::from_str(include_str!(
+            "../../examples/data/rest_project_solve_response.json"
+        ))
+        .unwrap()
+    }
+
+    fn expected_bad_schema_error_response() -> Value {
+        serde_json::from_str(include_str!(
+            "../../examples/data/rest_bad_schema_error_response.json"
+        ))
+        .unwrap()
+    }
+
+    fn mesh_artifact_upload() -> Value {
+        serde_json::from_str(include_str!(
+            "../../examples/data/rest_mesh_artifact_upload.json"
+        ))
+        .unwrap()
+    }
+
     async fn poll_async_result(app: Router, job_id: &str) -> Value {
         for _ in 0..10 {
             let response = app
@@ -1417,51 +1420,10 @@ mod tests {
     }
 
     fn project_request() -> Value {
-        json!({
-            "project": {
-                "schema_version": 1,
-                "name": "server project",
-                "jobs": [
-                    {
-                        "id": "solve-square",
-                        "mesh": {
-                            "points": [
-                                { "x": 0.0, "y": 0.0 },
-                                { "x": 1.0, "y": 0.0 },
-                                { "x": 1.0, "y": 1.0 },
-                                { "x": 0.0, "y": 1.0 },
-                                { "x": 0.5, "y": 0.5 }
-                            ],
-                            "triangles": [
-                                { "nodes": [0, 1, 4] },
-                                { "nodes": [1, 2, 4] },
-                                { "nodes": [2, 3, 4] },
-                                { "nodes": [3, 0, 4] }
-                            ]
-                        },
-                        "physics": {
-                            "kind": "poisson",
-                            "conductivity": 1.0,
-                            "source": { "kind": "constant", "value": 1.0 },
-                            "dirichlet": [
-                                { "node": 0, "value": 0.0 },
-                                { "node": 1, "value": 0.0 },
-                                { "node": 2, "value": 0.0 },
-                                { "node": 3, "value": 0.0 }
-                            ],
-                            "solver_options": {
-                                "max_iterations": 10000,
-                                "tolerance": 1e-10,
-                                "backend": "dense_direct",
-                                "preconditioner": "none",
-                                "record_residual_history": false
-                            }
-                        },
-                        "output": { "format": "solution" }
-                    }
-                ]
-            }
-        })
+        serde_json::from_str(include_str!(
+            "../../examples/data/rest_project_request.json"
+        ))
+        .unwrap()
     }
 
     fn triangle_mesh_text() -> &'static str {

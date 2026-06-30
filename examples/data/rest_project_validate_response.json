@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "status": "valid",
+  "job_count": 1,
+  "jobs": [
+    {
+      "id": "solve-square",
+      "status": "valid",
+      "physics": "poisson",
+      "points": 5,
+      "triangles": 4
+    }
+  ]
+}

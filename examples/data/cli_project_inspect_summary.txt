@@ -1,0 +1,2 @@
+name: square poisson
+- solve-square: physics=poisson, points=5, triangles=4

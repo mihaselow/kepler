@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "status": "completed",
+  "jobs": [
+    {
+      "id": "solve-square",
+      "status": "completed",
+      "physics": "poisson",
+      "values": [0.0, 0.0, 0.0, 0.0, 0.08333333333333333],
+      "iterations": 1,
+      "residual_norm": 0.0,
+      "diagnostics": {
+        "backend": "dense_direct",
+        "preconditioner": "none",
+        "converged": true,
+        "initial_residual_norm": 0.3333333333333333,
+        "residual_history": []
+      }
+    }
+  ]
+}

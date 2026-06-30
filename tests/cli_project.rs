@@ -6,6 +6,8 @@ use std::{
 };
 
 const PROJECT_JSON: &str = include_str!("../examples/data/square.project.json");
+const PROJECT_INSPECT_SUMMARY: &str =
+    include_str!("../examples/data/cli_project_inspect_summary.txt");
 
 const LEGACY_MESH: &str = r#"
 nodes
@@ -74,8 +76,12 @@ fn cli_inspects_project_file() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("name: square poisson"));
-    assert!(stdout.contains("- solve-square: physics=poisson, points=5, triangles=4"));
+    for expected_line in PROJECT_INSPECT_SUMMARY.lines() {
+        assert!(
+            stdout.contains(expected_line),
+            "inspect output should contain golden line `{expected_line}`; stdout: {stdout}",
+        );
+    }
     remove_dir(&dir);
 }
 

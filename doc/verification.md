@@ -61,8 +61,14 @@ Current checked-in fixtures:
 - `examples/data/physical_groups_2d.msh`
 - `examples/data/physical_groups_2d_temperature.vtk`
 - `examples/data/two_node.solution`
+- `examples/data/cli_project_inspect_summary.txt`
+- `examples/data/rest_project_request.json`
+- `examples/data/rest_project_validate_response.json`
+- `examples/data/rest_project_solve_response.json`
+- `examples/data/rest_bad_schema_error_response.json`
+- `examples/data/rest_mesh_artifact_upload.json`
 
-These fixtures cover the legacy mesh/params path, the v1 project workflow path, Gmsh import, VTK export, and compact solution output.
+These fixtures cover the legacy mesh/params path, the v1 project workflow path, Gmsh import, VTK export, compact solution output, CLI project inspection, REST project validation/solve envelopes, REST error schema stability, and artifact uploads.
 
 ## Current Coverage Map
 
@@ -75,7 +81,7 @@ These fixtures cover the legacy mesh/params path, the v1 project workflow path, 
 - Modal analysis: 2D/3D sorted modes, density validation, constrained model validation, one-DOF frequency references.
 - Solver stack: CG, GMRES, dense direct, Jacobi preconditioning, diagnostics, Newton, theta transient, Newmark transient.
 - Import/export: legacy mesh/params/solution, golden solution output, Gmsh physical groups, VTK scalar output.
-- Project workflows: v1 project parsing/validation, CLI validation/inspection, REST validation/solve, async jobs, artifact upload/download.
+- Project workflows: v1 project parsing/validation, CLI validation/inspection golden output, REST validation/solve golden envelopes, async jobs, artifact upload/download fixtures, and stable error schemas.
 
 ## Known Gaps
 

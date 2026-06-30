@@ -112,8 +112,8 @@ Project validation currently checks:
 Project workflow coverage is split across focused fixtures:
 
 - `tests/project_workflow.rs` covers schema parsing, validation, schema-version handling, duplicate job IDs, boundary validation, and legacy mesh/params conversion.
-- `tests/cli_project.rs` covers `project validate`, `project inspect`, invalid project handling, and the preserved legacy solve command.
-- `src/bin/server.rs` tests cover direct Poisson solves, project validation, synchronous project solves, asynchronous job status/result/cancel flows, stable REST errors, and artifact upload/download validation.
+- `tests/cli_project.rs` covers `project validate`, `project inspect`, invalid project handling, the preserved legacy solve command, and the `examples/data/cli_project_inspect_summary.txt` golden output.
+- `src/bin/server.rs` tests cover direct Poisson solves, project validation, synchronous project solves, asynchronous job status/result/cancel flows, stable REST errors, and artifact upload/download validation using REST fixtures such as `examples/data/rest_project_request.json`, `examples/data/rest_project_validate_response.json`, `examples/data/rest_project_solve_response.json`, `examples/data/rest_bad_schema_error_response.json`, and `examples/data/rest_mesh_artifact_upload.json`.
 - `examples/data/square.project.json` is the documented v1 project fixture used by tests.
 
 Future roadmap phases can extend the same schema and fixture pattern to additional physics, durable job storage, multipart uploads, and binary result bundles.

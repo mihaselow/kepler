@@ -41,6 +41,12 @@ const REQUIRED_FIXTURES: &[&str] = &[
     "examples/data/physical_groups_2d.msh",
     "examples/data/physical_groups_2d_temperature.vtk",
     "examples/data/two_node.solution",
+    "examples/data/cli_project_inspect_summary.txt",
+    "examples/data/rest_project_request.json",
+    "examples/data/rest_project_validate_response.json",
+    "examples/data/rest_project_solve_response.json",
+    "examples/data/rest_bad_schema_error_response.json",
+    "examples/data/rest_mesh_artifact_upload.json",
 ];
 
 #[test]
