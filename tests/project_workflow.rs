@@ -4,6 +4,8 @@ use kepler::{
     format_project, job_to_poisson, parse_params_str, parse_project_str, validate_project,
 };
 
+const SQUARE_PROJECT: &str = include_str!("../examples/data/square.project.json");
+
 const PROJECT_JSON: &str = r#"
 {
   "schema_version": 1,
@@ -65,6 +67,21 @@ fn parses_versioned_poisson_project() {
         PreconditionerKind::None
     );
     assert!(config.solver_options.record_residual_history);
+}
+
+#[test]
+fn parses_documented_square_project_fixture() {
+    let project = parse_project_str(SQUARE_PROJECT).unwrap();
+    let (mesh, config) = job_to_poisson(&project.jobs[0]).unwrap();
+
+    assert_eq!(project.name.as_deref(), Some("square poisson"));
+    assert_eq!(mesh.node_count(), 5);
+    assert_eq!(mesh.triangles().len(), 4);
+    assert_eq!(
+        config.solver_options.backend,
+        LinearSolverBackend::DenseDirect
+    );
+    assert_eq!(config.dirichlet.len(), 4);
 }
 
 #[test]

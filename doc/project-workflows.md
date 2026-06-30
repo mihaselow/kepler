@@ -45,6 +45,8 @@ Project files are JSON documents with `schema_version = 1` and one or more jobs:
 }
 ```
 
+The repository includes this example as `examples/data/square.project.json`, next to the legacy `square.mesh` and `square.params` fixtures.
+
 The current model supports:
 
 - 2D `Tri3` meshes embedded in the project.
@@ -81,6 +83,20 @@ kepler project inspect --project square.project.json
 
 `inspect` prints the schema version, job count, project name when present, and one line per job with physics kind and mesh size. These commands currently validate v1 synchronous Poisson projects and intentionally do not replace the legacy file-driven solve command.
 
+## REST Workflow Coverage
+
+The REST server exposes the same project schema through:
+
+- `POST /projects/validate` for schema and job validation.
+- `POST /projects/solve` for synchronous small Poisson jobs.
+- `POST /projects/jobs` for in-memory asynchronous submission.
+- `GET /projects/jobs/{job_id}` for status, logs, and result location.
+- `POST /projects/jobs/{job_id}/cancel` for a cancellation state hook.
+- `GET /projects/jobs/{job_id}/result` for result retrieval.
+- `POST /projects/artifacts` and `GET /projects/artifacts/{artifact_id}` for in-memory text artifacts.
+
+The project REST layer uses stable response envelopes and a stable error object with `error` and `code` fields. Jobs and artifacts are stored in memory only.
+
 ## Validation Rules
 
 Project validation currently checks:
@@ -91,4 +107,13 @@ Project validation currently checks:
 - Mesh validity through the existing `Mesh` validator.
 - Poisson boundary references through existing parameter validation.
 
-Future workflow sub-steps will add REST project submission envelopes, asynchronous job state, upload/download-oriented artifact handling, and broader physics/job coverage.
+## Verification Fixtures
+
+Project workflow coverage is split across focused fixtures:
+
+- `tests/project_workflow.rs` covers schema parsing, validation, schema-version handling, duplicate job IDs, boundary validation, and legacy mesh/params conversion.
+- `tests/cli_project.rs` covers `project validate`, `project inspect`, invalid project handling, and the preserved legacy solve command.
+- `src/bin/server.rs` tests cover direct Poisson solves, project validation, synchronous project solves, asynchronous job status/result/cancel flows, stable REST errors, and artifact upload/download validation.
+- `examples/data/square.project.json` is the documented v1 project fixture used by tests.
+
+Future roadmap phases can extend the same schema and fixture pattern to additional physics, durable job storage, multipart uploads, and binary result bundles.

@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "name": "square poisson",
+  "jobs": [
+    {
+      "id": "solve-square",
+      "mesh": {
+        "points": [
+          { "x": 0.0, "y": 0.0 },
+          { "x": 1.0, "y": 0.0 },
+          { "x": 1.0, "y": 1.0 },
+          { "x": 0.0, "y": 1.0 },
+          { "x": 0.5, "y": 0.5 }
+        ],
+        "triangles": [
+          { "nodes": [0, 1, 4] },
+          { "nodes": [1, 2, 4] },
+          { "nodes": [2, 3, 4] },
+          { "nodes": [3, 0, 4] }
+        ]
+      },
+      "physics": {
+        "kind": "poisson",
+        "conductivity": 1.0,
+        "source": { "kind": "constant", "value": 1.0 },
+        "dirichlet": [
+          { "node": 0, "value": 0.0 },
+          { "node": 1, "value": 0.0 },
+          { "node": 2, "value": 0.0 },
+          { "node": 3, "value": 0.0 }
+        ],
+        "solver_options": {
+          "max_iterations": 10000,
+          "tolerance": 1e-10,
+          "backend": "dense_direct",
+          "preconditioner": "none",
+          "record_residual_history": false
+        }
+      },
+      "output": { "format": "solution" }
+    }
+  ]
+}

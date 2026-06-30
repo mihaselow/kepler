@@ -5,44 +5,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const PROJECT_JSON: &str = r#"
-{
-  "schema_version": 1,
-  "name": "cli project",
-  "jobs": [
-    {
-      "id": "solve-triangle",
-      "mesh": {
-        "points": [
-          { "x": 0.0, "y": 0.0 },
-          { "x": 1.0, "y": 0.0 },
-          { "x": 0.0, "y": 1.0 }
-        ],
-        "triangles": [
-          { "nodes": [0, 1, 2] }
-        ]
-      },
-      "physics": {
-        "kind": "poisson",
-        "conductivity": 1.0,
-        "source": { "kind": "constant", "value": 1.0 },
-        "dirichlet": [
-          { "node": 0, "value": 0.0 },
-          { "node": 2, "value": 0.0 }
-        ],
-        "solver_options": {
-          "max_iterations": 50,
-          "tolerance": 1e-9,
-          "backend": "dense_direct",
-          "preconditioner": "none",
-          "record_residual_history": false
-        }
-      },
-      "output": { "format": "solution" }
-    }
-  ]
-}
-"#;
+const PROJECT_JSON: &str = include_str!("../examples/data/square.project.json");
 
 const LEGACY_MESH: &str = r#"
 nodes
@@ -111,8 +74,8 @@ fn cli_inspects_project_file() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("name: cli project"));
-    assert!(stdout.contains("- solve-triangle: physics=poisson, points=3, triangles=1"));
+    assert!(stdout.contains("name: square poisson"));
+    assert!(stdout.contains("- solve-square: physics=poisson, points=5, triangles=4"));
     remove_dir(&dir);
 }
 
