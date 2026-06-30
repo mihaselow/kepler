@@ -248,6 +248,26 @@ impl Mesh {
         })
     }
 
+    pub fn new_with_cells(points: Vec<Point2>, cells: Vec<Cell>) -> Result<Self, MeshError> {
+        if points.is_empty() {
+            return Err(MeshError::EmptyMesh);
+        }
+
+        let regions = Vec::new();
+        for (cell_index, cell) in cells.iter().enumerate() {
+            validate_cell(cell_index, cell, points.len(), 2, &regions)?;
+            let pts: Vec<PointD<2>> = points.iter().copied().map(PointD::from).collect();
+            validate_cell_geometry(cell_index, cell, &pts)?;
+        }
+
+        Ok(Self {
+            points,
+            triangles: Vec::new(),
+            cells,
+            regions,
+        })
+    }
+
     pub fn points(&self) -> &[Point2] {
         &self.points
     }

@@ -399,3 +399,140 @@ fn elasticity_recovers_stress_and_strain_for_triangle() {
     assert!(strain.eps_yy < 0.0); // Poisson contraction
     assert_close(strain.gamma_xy, 0.0);
 }
+
+#[test]
+fn elasticity_solve_quad4_plane_stress_patch() {
+    use kepler::{Cell, ElementKind};
+
+    // Unit square: Quad4
+    let points = vec![
+        Point2 { x: 0.0, y: 0.0 },
+        Point2 { x: 1.0, y: 0.0 },
+        Point2 { x: 1.0, y: 1.0 },
+        Point2 { x: 0.0, y: 1.0 },
+    ];
+    let cells = vec![Cell::new(ElementKind::Quad4, vec![0, 1, 2, 3])];
+    let mesh = Mesh::new_with_cells(points, cells).unwrap();
+
+    let problem = ElasticityProblem {
+        material: material(),
+        thickness: 1.0,
+        constraints: vec![
+            DisplacementConstraint {
+                node: 0,
+                component: DisplacementComponent::X,
+                value: 0.0,
+            },
+            DisplacementConstraint {
+                node: 0,
+                component: DisplacementComponent::Y,
+                value: 0.0,
+            },
+            DisplacementConstraint {
+                node: 3,
+                component: DisplacementComponent::X,
+                value: 0.0,
+            },
+        ],
+        forces: vec![
+            NodalForce {
+                node: 1,
+                fx: 0.5,
+                fy: 0.0,
+            },
+            NodalForce {
+                node: 2,
+                fx: 0.5,
+                fy: 0.0,
+            },
+        ],
+    };
+
+    let result =
+        solve_elasticity_with_solver(&mesh, &problem, LinearSolverOptions::default()).unwrap();
+
+    // Verify displacements are positive in X direction
+    assert!(result.displacements[1][0] > 0.0);
+    assert!(result.displacements[2][0] > 0.0);
+
+    // Verify stress recovery
+    assert_eq!(result.element_stress.len(), 1);
+    let stress = result.element_stress[0];
+    assert!(stress.sigma_xx > 0.0);
+    assert_close(stress.sigma_yy, 0.0);
+    assert_close(stress.sigma_xy, 0.0);
+    assert_close(stress.von_mises, stress.sigma_xx);
+
+    let strain = result.element_strain[0];
+    assert!(strain.eps_xx > 0.0);
+    assert!(strain.eps_yy < 0.0);
+    assert_close(strain.gamma_xy, 0.0);
+}
+
+#[test]
+fn elasticity_solve_tri6_plane_stress_patch() {
+    use kepler::{Cell, ElementKind};
+
+    // Quadratic triangle: Tri6
+    let points = vec![
+        Point2 { x: 0.0, y: 0.0 }, // 0
+        Point2 { x: 1.0, y: 0.0 }, // 1
+        Point2 { x: 0.0, y: 1.0 }, // 2
+        Point2 { x: 0.5, y: 0.0 }, // 3
+        Point2 { x: 0.5, y: 0.5 }, // 4
+        Point2 { x: 0.0, y: 0.5 }, // 5
+    ];
+    let cells = vec![Cell::new(ElementKind::Tri6, vec![0, 1, 2, 3, 4, 5])];
+    let mesh = Mesh::new_with_cells(points, cells).unwrap();
+
+    let problem = ElasticityProblem {
+        material: material(),
+        thickness: 1.0,
+        constraints: vec![
+            DisplacementConstraint {
+                node: 0,
+                component: DisplacementComponent::X,
+                value: 0.0,
+            },
+            DisplacementConstraint {
+                node: 0,
+                component: DisplacementComponent::Y,
+                value: 0.0,
+            },
+            DisplacementConstraint {
+                node: 5,
+                component: DisplacementComponent::X,
+                value: 0.0,
+            },
+            DisplacementConstraint {
+                node: 2,
+                component: DisplacementComponent::X,
+                value: 0.0,
+            },
+        ],
+        forces: vec![NodalForce {
+            node: 1,
+            fx: 1.0,
+            fy: 0.0,
+        }],
+    };
+
+    let result =
+        solve_elasticity_with_solver(&mesh, &problem, LinearSolverOptions::default()).unwrap();
+
+    // Verify displacements
+    assert!(result.displacements[1][0] > 0.0);
+
+    // Verify stress recovery
+    assert_eq!(result.element_stress.len(), 1);
+    let stress = result.element_stress[0];
+    assert!(stress.sigma_xx > 0.0);
+    assert_close(stress.sigma_yy, 0.0);
+    assert_close(stress.sigma_xy, 0.0);
+    assert_close(stress.von_mises, stress.sigma_xx);
+
+    let strain = result.element_strain[0];
+    assert!(strain.eps_xx > 0.0);
+    assert!(strain.eps_yy < 0.0);
+    assert_close(strain.gamma_xy, 0.0);
+}

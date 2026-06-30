@@ -689,27 +689,83 @@ fn assemble_elasticity_stiffness_matrix(
     use rayon::prelude::*;
 
     let dof_count = mesh.node_count() * 2;
-    let triangles: Vec<_> = mesh.triangles().to_vec();
-    let element_triplets = triangles
+    let cells = mesh.cells().to_vec();
+    let element_triplets = cells
         .par_iter()
-        .map(|triangle| {
-            let stiffness = local_elasticity_stiffness(mesh, triangle, material, thickness)?;
-            // DOFs are registered as: node 0 -> (ux=0, uy=1), node 1 -> (ux=2, uy=3), ...
-            let dofs = [
-                triangle.nodes[0] * 2,
-                triangle.nodes[0] * 2 + 1,
-                triangle.nodes[1] * 2,
-                triangle.nodes[1] * 2 + 1,
-                triangle.nodes[2] * 2,
-                triangle.nodes[2] * 2 + 1,
-            ];
-            let mut triplets = Vec::with_capacity(36);
+        .map(|cell| {
+            let node_coords: Vec<Point3> = cell
+                .nodes
+                .iter()
+                .map(|&id| Point3::new([mesh.points()[id].x, mesh.points()[id].y, 0.0]))
+                .collect();
+
+            let mut properties = BTreeMap::new();
+            properties.insert("young_modulus".to_string(), material.young_modulus);
+            properties.insert("poisson_ratio".to_string(), material.poisson_ratio);
+            properties.insert("thickness".to_string(), thickness);
+            let model_val = match material.model {
+                ElasticityModel::PlaneStress => 0.0,
+                ElasticityModel::PlaneStrain => 1.0,
+            };
+            properties.insert("model".to_string(), model_val);
+
+            let local_k = match cell.kind {
+                ElementKind::Tri3 => {
+                    let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2]];
+                    let el = ElasticityTri3 {
+                        nodes: &nodes,
+                        thickness,
+                    };
+                    el.local_stiffness(&node_coords, &properties)
+                }
+                ElementKind::Quad4 => {
+                    let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2], cell.nodes[3]];
+                    let el = ElasticityQuad4 {
+                        nodes: &nodes,
+                        thickness,
+                    };
+                    el.local_stiffness(&node_coords, &properties)
+                }
+                ElementKind::Tri6 => {
+                    let nodes = [
+                        cell.nodes[0],
+                        cell.nodes[1],
+                        cell.nodes[2],
+                        cell.nodes[3],
+                        cell.nodes[4],
+                        cell.nodes[5],
+                    ];
+                    let el = ElasticityTri6 {
+                        nodes: &nodes,
+                        thickness,
+                    };
+                    el.local_stiffness(&node_coords, &properties)
+                }
+                _ => {
+                    return Err(ElasticityError::UnsupportedElementKind {
+                        cell_index: 0,
+                        kind: cell.kind,
+                    });
+                }
+            }
+            .map_err(|_| ElasticityError::UnsupportedElementKind {
+                cell_index: 0,
+                kind: cell.kind,
+            })?;
+
+            let mut dofs = Vec::with_capacity(cell.nodes.len() * 2);
+            for &node in &cell.nodes {
+                dofs.push(node * 2);
+                dofs.push(node * 2 + 1);
+            }
+
+            let mut triplets = Vec::with_capacity(dofs.len() * dofs.len());
             for (local_row, global_row) in dofs.iter().copied().enumerate() {
                 for (local_col, global_col) in dofs.iter().copied().enumerate() {
                     triplets.push(Triplet {
                         row: global_row,
                         col: global_col,
-                        val: stiffness[local_row][local_col],
+                        val: local_k[local_row][local_col],
                     });
                 }
             }
@@ -993,6 +1049,479 @@ impl<'a> Element for ElasticityTri3<'a> {
                 }
             }
         }
+        Ok(mass)
+    }
+}
+
+pub struct ElasticityQuad4<'a> {
+    pub nodes: &'a [NodeId; 4],
+    pub thickness: f64,
+}
+
+impl<'a> Element for ElasticityQuad4<'a> {
+    fn spatial_dimension(&self) -> usize {
+        2
+    }
+    fn node_count(&self) -> usize {
+        4
+    }
+    fn nodes(&self) -> &[NodeId] {
+        self.nodes
+    }
+    fn active_fields(&self) -> Vec<String> {
+        vec!["ux".to_string(), "uy".to_string()]
+    }
+
+    fn local_stiffness(
+        &self,
+        node_coords: &[Point3],
+        properties: &BTreeMap<String, f64>,
+    ) -> Result<Vec<Vec<f64>>, ElementError> {
+        let young_modulus = *properties
+            .get("young_modulus")
+            .ok_or_else(|| ElementError::MissingProperty("young_modulus".to_string()))?;
+        let poisson_ratio = *properties
+            .get("poisson_ratio")
+            .ok_or_else(|| ElementError::MissingProperty("poisson_ratio".to_string()))?;
+        let thickness = *properties
+            .get("thickness")
+            .ok_or_else(|| ElementError::MissingProperty("thickness".to_string()))?;
+        let model_val = *properties.get("model").unwrap_or(&0.0);
+        let model = if model_val == 1.0 {
+            ElasticityModel::PlaneStrain
+        } else {
+            ElasticityModel::PlaneStress
+        };
+
+        if node_coords.len() != 4 {
+            return Err(ElementError::InvalidNodeCount {
+                expected: 4,
+                actual: node_coords.len(),
+            });
+        }
+
+        let constitutive = constitutive_matrix(ElasticityMaterial {
+            young_modulus,
+            poisson_ratio,
+            model,
+        });
+
+        let g_pts = [-1.0 / 3.0f64.sqrt(), 1.0 / 3.0f64.sqrt()];
+        let mut stiffness = vec![vec![0.0; 8]; 8];
+
+        for &xi in &g_pts {
+            for &eta in &g_pts {
+                let dn_dxi = [
+                    -0.25 * (1.0 - eta),
+                    0.25 * (1.0 - eta),
+                    0.25 * (1.0 + eta),
+                    -0.25 * (1.0 + eta),
+                ];
+                let dn_deta = [
+                    -0.25 * (1.0 - xi),
+                    -0.25 * (1.0 + xi),
+                    0.25 * (1.0 + xi),
+                    0.25 * (1.0 - xi),
+                ];
+
+                let mut j11 = 0.0;
+                let mut j12 = 0.0;
+                let mut j21 = 0.0;
+                let mut j22 = 0.0;
+                for a in 0..4 {
+                    j11 += dn_dxi[a] * node_coords[a].coords[0];
+                    j12 += dn_dxi[a] * node_coords[a].coords[1];
+                    j21 += dn_deta[a] * node_coords[a].coords[0];
+                    j22 += dn_deta[a] * node_coords[a].coords[1];
+                }
+
+                let det_j = j11 * j22 - j12 * j21;
+                if det_j.abs() <= f64::EPSILON {
+                    return Err(ElementError::DegenerateGeometry);
+                }
+
+                let inv_j11 = j22 / det_j;
+                let inv_j12 = -j12 / det_j;
+                let inv_j21 = -j21 / det_j;
+                let inv_j22 = j11 / det_j;
+
+                let mut dn_dx = [0.0; 4];
+                let mut dn_dy = [0.0; 4];
+                for a in 0..4 {
+                    dn_dx[a] = inv_j11 * dn_dxi[a] + inv_j12 * dn_deta[a];
+                    dn_dy[a] = inv_j21 * dn_dxi[a] + inv_j22 * dn_deta[a];
+                }
+
+                let mut b_mat = [[0.0; 8]; 3];
+                for a in 0..4 {
+                    b_mat[0][2 * a] = dn_dx[a];
+                    b_mat[1][2 * a + 1] = dn_dy[a];
+                    b_mat[2][2 * a] = dn_dy[a];
+                    b_mat[2][2 * a + 1] = dn_dx[a];
+                }
+
+                let factor = det_j.abs() * thickness;
+                for row in 0..8 {
+                    for col in 0..8 {
+                        let mut val = 0.0;
+                        for alpha in 0..3 {
+                            for beta in 0..3 {
+                                val += b_mat[alpha][row]
+                                    * constitutive[alpha][beta]
+                                    * b_mat[beta][col];
+                            }
+                        }
+                        stiffness[row][col] += val * factor;
+                    }
+                }
+            }
+        }
+
+        Ok(stiffness)
+    }
+
+    fn local_mass(
+        &self,
+        node_coords: &[Point3],
+        density: f64,
+        lumped: bool,
+    ) -> Result<Vec<Vec<f64>>, ElementError> {
+        if node_coords.len() != 4 {
+            return Err(ElementError::InvalidNodeCount {
+                expected: 4,
+                actual: node_coords.len(),
+            });
+        }
+
+        let g_pts = [-1.0 / 3.0f64.sqrt(), 1.0 / 3.0f64.sqrt()];
+        let mut mass = vec![vec![0.0; 8]; 8];
+
+        if lumped {
+            let mut total_mass = 0.0;
+            for &xi in &g_pts {
+                for &eta in &g_pts {
+                    let dn_dxi = [
+                        -0.25 * (1.0 - eta),
+                        0.25 * (1.0 - eta),
+                        0.25 * (1.0 + eta),
+                        -0.25 * (1.0 + eta),
+                    ];
+                    let dn_deta = [
+                        -0.25 * (1.0 - xi),
+                        -0.25 * (1.0 + xi),
+                        0.25 * (1.0 + xi),
+                        0.25 * (1.0 - xi),
+                    ];
+                    let mut j11 = 0.0;
+                    let mut j12 = 0.0;
+                    let mut j21 = 0.0;
+                    let mut j22 = 0.0;
+                    for a in 0..4 {
+                        j11 += dn_dxi[a] * node_coords[a].coords[0];
+                        j12 += dn_dxi[a] * node_coords[a].coords[1];
+                        j21 += dn_deta[a] * node_coords[a].coords[0];
+                        j22 += dn_deta[a] * node_coords[a].coords[1];
+                    }
+                    let det_j = j11 * j22 - j12 * j21;
+                    total_mass += density * self.thickness * det_j.abs();
+                }
+            }
+            let nodal_mass = total_mass / 4.0;
+            for i in 0..4 {
+                mass[2 * i][2 * i] = nodal_mass;
+                mass[2 * i + 1][2 * i + 1] = nodal_mass;
+            }
+        } else {
+            for &xi in &g_pts {
+                for &eta in &g_pts {
+                    let n = [
+                        0.25 * (1.0 - xi) * (1.0 - eta),
+                        0.25 * (1.0 + xi) * (1.0 - eta),
+                        0.25 * (1.0 + xi) * (1.0 + eta),
+                        0.25 * (1.0 - xi) * (1.0 + eta),
+                    ];
+                    let dn_dxi = [
+                        -0.25 * (1.0 - eta),
+                        0.25 * (1.0 - eta),
+                        0.25 * (1.0 + eta),
+                        -0.25 * (1.0 + eta),
+                    ];
+                    let dn_deta = [
+                        -0.25 * (1.0 - xi),
+                        -0.25 * (1.0 + xi),
+                        0.25 * (1.0 + xi),
+                        0.25 * (1.0 - xi),
+                    ];
+                    let mut j11 = 0.0;
+                    let mut j12 = 0.0;
+                    let mut j21 = 0.0;
+                    let mut j22 = 0.0;
+                    for a in 0..4 {
+                        j11 += dn_dxi[a] * node_coords[a].coords[0];
+                        j12 += dn_dxi[a] * node_coords[a].coords[1];
+                        j21 += dn_deta[a] * node_coords[a].coords[0];
+                        j22 += dn_deta[a] * node_coords[a].coords[1];
+                    }
+                    let det_j = j11 * j22 - j12 * j21;
+                    let factor = density * self.thickness * det_j.abs();
+                    for i in 0..4 {
+                        for j in 0..4 {
+                            let term = n[i] * n[j] * factor;
+                            mass[2 * i][2 * j] += term;
+                            mass[2 * i + 1][2 * j + 1] += term;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(mass)
+    }
+}
+
+pub struct ElasticityTri6<'a> {
+    pub nodes: &'a [NodeId; 6],
+    pub thickness: f64,
+}
+
+impl<'a> Element for ElasticityTri6<'a> {
+    fn spatial_dimension(&self) -> usize {
+        2
+    }
+    fn node_count(&self) -> usize {
+        6
+    }
+    fn nodes(&self) -> &[NodeId] {
+        self.nodes
+    }
+    fn active_fields(&self) -> Vec<String> {
+        vec!["ux".to_string(), "uy".to_string()]
+    }
+
+    fn local_stiffness(
+        &self,
+        node_coords: &[Point3],
+        properties: &BTreeMap<String, f64>,
+    ) -> Result<Vec<Vec<f64>>, ElementError> {
+        let young_modulus = *properties
+            .get("young_modulus")
+            .ok_or_else(|| ElementError::MissingProperty("young_modulus".to_string()))?;
+        let poisson_ratio = *properties
+            .get("poisson_ratio")
+            .ok_or_else(|| ElementError::MissingProperty("poisson_ratio".to_string()))?;
+        let thickness = *properties
+            .get("thickness")
+            .ok_or_else(|| ElementError::MissingProperty("thickness".to_string()))?;
+        let model_val = *properties.get("model").unwrap_or(&0.0);
+        let model = if model_val == 1.0 {
+            ElasticityModel::PlaneStrain
+        } else {
+            ElasticityModel::PlaneStress
+        };
+
+        if node_coords.len() != 6 {
+            return Err(ElementError::InvalidNodeCount {
+                expected: 6,
+                actual: node_coords.len(),
+            });
+        }
+
+        let constitutive = constitutive_matrix(ElasticityMaterial {
+            young_modulus,
+            poisson_ratio,
+            model,
+        });
+
+        let pts = [
+            (2.0 / 3.0, 1.0 / 6.0),
+            (1.0 / 6.0, 2.0 / 3.0),
+            (1.0 / 6.0, 1.0 / 6.0),
+        ];
+        let w = 1.0 / 6.0;
+
+        let mut stiffness = vec![vec![0.0; 12]; 12];
+
+        for &(l1, l2) in &pts {
+            let _l3 = 1.0 - l1 - l2;
+
+            let dn_dl1 = [
+                4.0 * l1 - 1.0,
+                0.0,
+                4.0 * l1 + 4.0 * l2 - 3.0,
+                4.0 * l2,
+                -4.0 * l2,
+                4.0 * (1.0 - 2.0 * l1 - l2),
+            ];
+            let dn_dl2 = [
+                0.0,
+                4.0 * l2 - 1.0,
+                4.0 * l1 + 4.0 * l2 - 3.0,
+                4.0 * l1,
+                4.0 * (1.0 - l1 - 2.0 * l2),
+                -4.0 * l1,
+            ];
+
+            let mut j11 = 0.0;
+            let mut j12 = 0.0;
+            let mut j21 = 0.0;
+            let mut j22 = 0.0;
+            for a in 0..6 {
+                j11 += dn_dl1[a] * node_coords[a].coords[0];
+                j12 += dn_dl1[a] * node_coords[a].coords[1];
+                j21 += dn_dl2[a] * node_coords[a].coords[0];
+                j22 += dn_dl2[a] * node_coords[a].coords[1];
+            }
+
+            let det_j = j11 * j22 - j12 * j21;
+            if det_j.abs() <= f64::EPSILON {
+                return Err(ElementError::DegenerateGeometry);
+            }
+
+            let inv_j11 = j22 / det_j;
+            let inv_j12 = -j12 / det_j;
+            let inv_j21 = -j21 / det_j;
+            let inv_j22 = j11 / det_j;
+
+            let mut dn_dx = [0.0; 6];
+            let mut dn_dy = [0.0; 6];
+            for a in 0..6 {
+                dn_dx[a] = inv_j11 * dn_dl1[a] + inv_j12 * dn_dl2[a];
+                dn_dy[a] = inv_j21 * dn_dl1[a] + inv_j22 * dn_dl2[a];
+            }
+
+            let mut b_mat = [[0.0; 12]; 3];
+            for a in 0..6 {
+                b_mat[0][2 * a] = dn_dx[a];
+                b_mat[1][2 * a + 1] = dn_dy[a];
+                b_mat[2][2 * a] = dn_dy[a];
+                b_mat[2][2 * a + 1] = dn_dx[a];
+            }
+
+            let factor = det_j.abs() * w * thickness;
+            for row in 0..12 {
+                for col in 0..12 {
+                    let mut val = 0.0;
+                    for alpha in 0..3 {
+                        for beta in 0..3 {
+                            val += b_mat[alpha][row] * constitutive[alpha][beta] * b_mat[beta][col];
+                        }
+                    }
+                    stiffness[row][col] += val * factor;
+                }
+            }
+        }
+
+        Ok(stiffness)
+    }
+
+    fn local_mass(
+        &self,
+        node_coords: &[Point3],
+        density: f64,
+        lumped: bool,
+    ) -> Result<Vec<Vec<f64>>, ElementError> {
+        if node_coords.len() != 6 {
+            return Err(ElementError::InvalidNodeCount {
+                expected: 6,
+                actual: node_coords.len(),
+            });
+        }
+
+        let pts = [
+            (2.0 / 3.0, 1.0 / 6.0),
+            (1.0 / 6.0, 2.0 / 3.0),
+            (1.0 / 6.0, 1.0 / 6.0),
+        ];
+        let w = 1.0 / 6.0;
+
+        let mut mass = vec![vec![0.0; 12]; 12];
+
+        if lumped {
+            let mut total_mass = 0.0;
+            for &(l1, l2) in &pts {
+                let dn_dl1 = [
+                    4.0 * l1 - 1.0,
+                    0.0,
+                    4.0 * l1 + 4.0 * l2 - 3.0,
+                    4.0 * l2,
+                    -4.0 * l2,
+                    4.0 * (1.0 - 2.0 * l1 - l2),
+                ];
+                let dn_dl2 = [
+                    0.0,
+                    4.0 * l2 - 1.0,
+                    4.0 * l1 + 4.0 * l2 - 3.0,
+                    4.0 * l1,
+                    4.0 * (1.0 - l1 - 2.0 * l2),
+                    -4.0 * l1,
+                ];
+                let mut j11 = 0.0;
+                let mut j12 = 0.0;
+                let mut j21 = 0.0;
+                let mut j22 = 0.0;
+                for a in 0..6 {
+                    j11 += dn_dl1[a] * node_coords[a].coords[0];
+                    j12 += dn_dl1[a] * node_coords[a].coords[1];
+                    j21 += dn_dl2[a] * node_coords[a].coords[0];
+                    j22 += dn_dl2[a] * node_coords[a].coords[1];
+                }
+                let det_j = j11 * j22 - j12 * j21;
+                total_mass += density * self.thickness * det_j.abs() * w;
+            }
+            let nodal_mass = total_mass / 6.0;
+            for i in 0..6 {
+                mass[2 * i][2 * i] = nodal_mass;
+                mass[2 * i + 1][2 * i + 1] = nodal_mass;
+            }
+        } else {
+            for &(l1, l2) in &pts {
+                let l3 = 1.0 - l1 - l2;
+                let n = [
+                    l1 * (2.0 * l1 - 1.0),
+                    l2 * (2.0 * l2 - 1.0),
+                    l3 * (2.0 * l3 - 1.0),
+                    4.0 * l1 * l2,
+                    4.0 * l2 * l3,
+                    4.0 * l3 * l1,
+                ];
+                let dn_dl1 = [
+                    4.0 * l1 - 1.0,
+                    0.0,
+                    4.0 * l1 + 4.0 * l2 - 3.0,
+                    4.0 * l2,
+                    -4.0 * l2,
+                    4.0 * (1.0 - 2.0 * l1 - l2),
+                ];
+                let dn_dl2 = [
+                    0.0,
+                    4.0 * l2 - 1.0,
+                    4.0 * l1 + 4.0 * l2 - 3.0,
+                    4.0 * l1,
+                    4.0 * (1.0 - l1 - 2.0 * l2),
+                    -4.0 * l1,
+                ];
+                let mut j11 = 0.0;
+                let mut j12 = 0.0;
+                let mut j21 = 0.0;
+                let mut j22 = 0.0;
+                for a in 0..6 {
+                    j11 += dn_dl1[a] * node_coords[a].coords[0];
+                    j12 += dn_dl1[a] * node_coords[a].coords[1];
+                    j21 += dn_dl2[a] * node_coords[a].coords[0];
+                    j22 += dn_dl2[a] * node_coords[a].coords[1];
+                }
+                let det_j = j11 * j22 - j12 * j21;
+                let factor = density * self.thickness * det_j.abs() * w;
+                for i in 0..6 {
+                    for j in 0..6 {
+                        let term = n[i] * n[j] * factor;
+                        mass[2 * i][2 * j] += term;
+                        mass[2 * i + 1][2 * j + 1] += term;
+                    }
+                }
+            }
+        }
+
         Ok(mass)
     }
 }
@@ -1380,13 +1909,60 @@ fn reconstruct_values(
 
 fn assemble_lumped_elasticity_mass(mesh: &Mesh, density: f64, thickness: f64) -> CsMat<f64> {
     let mut mass = vec![0.0; mesh.node_count() * 2];
-    for triangle in mesh.triangles() {
-        let [a, b, c] = triangle.nodes.map(|node| mesh.points()[node]);
-        let twice_area = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
-        let nodal_mass = density * thickness * twice_area.abs() / 6.0;
-        for node in triangle.nodes {
-            mass[dof_index(node, DisplacementComponent::X)] += nodal_mass;
-            mass[dof_index(node, DisplacementComponent::Y)] += nodal_mass;
+    for cell in mesh.cells() {
+        let node_coords: Vec<Point3> = cell
+            .nodes
+            .iter()
+            .map(|&id| Point3::new([mesh.points()[id].x, mesh.points()[id].y, 0.0]))
+            .collect();
+        match cell.kind {
+            ElementKind::Tri3 => {
+                let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2]];
+                let el = ElasticityTri3 {
+                    nodes: &nodes,
+                    thickness,
+                };
+                let local_m = el.local_mass(&node_coords, density, true).unwrap();
+                for i in 0..3 {
+                    let global_node = cell.nodes[i];
+                    mass[global_node * 2] += local_m[2 * i][2 * i];
+                    mass[global_node * 2 + 1] += local_m[2 * i + 1][2 * i + 1];
+                }
+            }
+            ElementKind::Quad4 => {
+                let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2], cell.nodes[3]];
+                let el = ElasticityQuad4 {
+                    nodes: &nodes,
+                    thickness,
+                };
+                let local_m = el.local_mass(&node_coords, density, true).unwrap();
+                for i in 0..4 {
+                    let global_node = cell.nodes[i];
+                    mass[global_node * 2] += local_m[2 * i][2 * i];
+                    mass[global_node * 2 + 1] += local_m[2 * i + 1][2 * i + 1];
+                }
+            }
+            ElementKind::Tri6 => {
+                let nodes = [
+                    cell.nodes[0],
+                    cell.nodes[1],
+                    cell.nodes[2],
+                    cell.nodes[3],
+                    cell.nodes[4],
+                    cell.nodes[5],
+                ];
+                let el = ElasticityTri6 {
+                    nodes: &nodes,
+                    thickness,
+                };
+                let local_m = el.local_mass(&node_coords, density, true).unwrap();
+                for i in 0..6 {
+                    let global_node = cell.nodes[i];
+                    mass[global_node * 2] += local_m[2 * i][2 * i];
+                    mass[global_node * 2 + 1] += local_m[2 * i + 1][2 * i + 1];
+                }
+            }
+            _ => panic!("Unsupported element kind in 2D mass assembly"),
         }
     }
     diagonal_matrix(mass)
@@ -1764,8 +2340,8 @@ pub fn recover_stress_2d(
 ) {
     let d = constitutive_matrix(*material);
     let node_count = mesh.node_count();
-    let triangles = mesh.triangles();
-    let n_elem = triangles.len();
+    let cells = mesh.cells();
+    let n_elem = cells.len();
 
     let mut element_stress = Vec::with_capacity(n_elem);
     let mut element_strain = Vec::with_capacity(n_elem);
@@ -1774,72 +2350,179 @@ pub fn recover_stress_2d(
     let mut nodal_stress_sum = vec![[0.0f64; 3]; node_count];
     let mut nodal_count = vec![0usize; node_count];
 
-    for tri in triangles {
-        let [n0, n1, n2] = tri.nodes;
-        let p0 = mesh.points()[n0];
-        let p1 = mesh.points()[n1];
-        let p2 = mesh.points()[n2];
+    for cell in cells {
+        let (b_mat_rows, dof_indices) = match cell.kind {
+            ElementKind::Tri3 => {
+                let n0 = cell.nodes[0];
+                let n1 = cell.nodes[1];
+                let n2 = cell.nodes[2];
+                let p0 = mesh.points()[n0];
+                let p1 = mesh.points()[n1];
+                let p2 = mesh.points()[n2];
 
-        let (x1, y1) = (p0.x, p0.y);
-        let (x2, y2) = (p1.x, p1.y);
-        let (x3, y3) = (p2.x, p2.y);
+                let twice_area = (p1.x - p0.x) * (p2.y - p0.y) - (p2.x - p0.x) * (p1.y - p0.y);
+                if twice_area.abs() <= f64::EPSILON {
+                    (vec![vec![0.0; 6]; 3], cell.nodes.clone())
+                } else {
+                    let b1 = p1.y - p2.y;
+                    let b2 = p2.y - p0.y;
+                    let b3 = p0.y - p1.y;
+                    let c1 = p2.x - p1.x;
+                    let c2 = p0.x - p2.x;
+                    let c3 = p1.x - p0.x;
 
-        let twice_area = (x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1);
-        // Skip degenerate elements silently.
-        if twice_area.abs() <= f64::EPSILON {
-            element_stress.push(StressTensor2D::from_components(0.0, 0.0, 0.0));
-            element_strain.push(StrainTensor2D {
-                eps_xx: 0.0,
-                eps_yy: 0.0,
-                gamma_xy: 0.0,
-            });
-            continue;
+                    let inv2a = 1.0 / twice_area;
+                    let b_mat = vec![
+                        vec![b1 * inv2a, 0.0, b2 * inv2a, 0.0, b3 * inv2a, 0.0],
+                        vec![0.0, c1 * inv2a, 0.0, c2 * inv2a, 0.0, c3 * inv2a],
+                        vec![
+                            c1 * inv2a,
+                            b1 * inv2a,
+                            c2 * inv2a,
+                            b2 * inv2a,
+                            c3 * inv2a,
+                            b3 * inv2a,
+                        ],
+                    ];
+                    (b_mat, cell.nodes.clone())
+                }
+            }
+            ElementKind::Quad4 => {
+                let node_coords: Vec<Point3> = cell
+                    .nodes
+                    .iter()
+                    .map(|&id| Point3::new([mesh.points()[id].x, mesh.points()[id].y, 0.0]))
+                    .collect();
+                let xi = 0.0;
+                let eta = 0.0;
+                let dn_dxi = [
+                    -0.25 * (1.0 - eta),
+                    0.25 * (1.0 - eta),
+                    0.25 * (1.0 + eta),
+                    -0.25 * (1.0 + eta),
+                ];
+                let dn_deta = [
+                    -0.25 * (1.0 - xi),
+                    -0.25 * (1.0 + xi),
+                    0.25 * (1.0 + xi),
+                    0.25 * (1.0 - xi),
+                ];
+
+                let mut j11 = 0.0;
+                let mut j12 = 0.0;
+                let mut j21 = 0.0;
+                let mut j22 = 0.0;
+                for a in 0..4 {
+                    j11 += dn_dxi[a] * node_coords[a].coords[0];
+                    j12 += dn_dxi[a] * node_coords[a].coords[1];
+                    j21 += dn_deta[a] * node_coords[a].coords[0];
+                    j22 += dn_deta[a] * node_coords[a].coords[1];
+                }
+
+                let det_j = j11 * j22 - j12 * j21;
+                if det_j.abs() <= f64::EPSILON {
+                    (vec![vec![0.0; 8]; 3], cell.nodes.clone())
+                } else {
+                    let inv_j11 = j22 / det_j;
+                    let inv_j12 = -j12 / det_j;
+                    let inv_j21 = -j21 / det_j;
+                    let inv_j22 = j11 / det_j;
+
+                    let mut dn_dx = [0.0; 4];
+                    let mut dn_dy = [0.0; 4];
+                    for a in 0..4 {
+                        dn_dx[a] = inv_j11 * dn_dxi[a] + inv_j12 * dn_deta[a];
+                        dn_dy[a] = inv_j21 * dn_dxi[a] + inv_j22 * dn_deta[a];
+                    }
+
+                    let mut b_mat = vec![vec![0.0; 8]; 3];
+                    for a in 0..4 {
+                        b_mat[0][2 * a] = dn_dx[a];
+                        b_mat[1][2 * a + 1] = dn_dy[a];
+                        b_mat[2][2 * a] = dn_dy[a];
+                        b_mat[2][2 * a + 1] = dn_dx[a];
+                    }
+                    (b_mat, cell.nodes.clone())
+                }
+            }
+            ElementKind::Tri6 => {
+                let node_coords: Vec<Point3> = cell
+                    .nodes
+                    .iter()
+                    .map(|&id| Point3::new([mesh.points()[id].x, mesh.points()[id].y, 0.0]))
+                    .collect();
+                let l1 = 1.0 / 3.0;
+                let l2 = 1.0 / 3.0;
+                let dn_dl1 = [
+                    4.0 * l1 - 1.0,
+                    0.0,
+                    4.0 * l1 + 4.0 * l2 - 3.0,
+                    4.0 * l2,
+                    -4.0 * l2,
+                    4.0 * (1.0 - 2.0 * l1 - l2),
+                ];
+                let dn_dl2 = [
+                    0.0,
+                    4.0 * l2 - 1.0,
+                    4.0 * l1 + 4.0 * l2 - 3.0,
+                    4.0 * l1,
+                    4.0 * (1.0 - l1 - 2.0 * l2),
+                    -4.0 * l1,
+                ];
+
+                let mut j11 = 0.0;
+                let mut j12 = 0.0;
+                let mut j21 = 0.0;
+                let mut j22 = 0.0;
+                for a in 0..6 {
+                    j11 += dn_dl1[a] * node_coords[a].coords[0];
+                    j12 += dn_dl1[a] * node_coords[a].coords[1];
+                    j21 += dn_dl2[a] * node_coords[a].coords[0];
+                    j22 += dn_dl2[a] * node_coords[a].coords[1];
+                }
+
+                let det_j = j11 * j22 - j12 * j21;
+                if det_j.abs() <= f64::EPSILON {
+                    (vec![vec![0.0; 12]; 3], cell.nodes.clone())
+                } else {
+                    let inv_j11 = j22 / det_j;
+                    let inv_j12 = -j12 / det_j;
+                    let inv_j21 = -j21 / det_j;
+                    let inv_j22 = j11 / det_j;
+
+                    let mut dn_dx = [0.0; 6];
+                    let mut dn_dy = [0.0; 6];
+                    for a in 0..6 {
+                        dn_dx[a] = inv_j11 * dn_dl1[a] + inv_j12 * dn_dl2[a];
+                        dn_dy[a] = inv_j21 * dn_dl1[a] + inv_j22 * dn_dl2[a];
+                    }
+
+                    let mut b_mat = vec![vec![0.0; 12]; 3];
+                    for a in 0..6 {
+                        b_mat[0][2 * a] = dn_dx[a];
+                        b_mat[1][2 * a + 1] = dn_dy[a];
+                        b_mat[2][2 * a] = dn_dy[a];
+                        b_mat[2][2 * a + 1] = dn_dx[a];
+                    }
+                    (b_mat, cell.nodes.clone())
+                }
+            }
+            _ => panic!("Unsupported element kind in 2D stress recovery"),
+        };
+
+        let mut u_e = vec![0.0; dof_indices.len() * 2];
+        for (i, &node) in dof_indices.iter().enumerate() {
+            u_e[2 * i] = displacements[node][0];
+            u_e[2 * i + 1] = displacements[node][1];
         }
 
-        let b1 = y2 - y3;
-        let b2 = y3 - y1;
-        let b3 = y1 - y2;
-        let c1 = x3 - x2;
-        let c2 = x1 - x3;
-        let c3 = x2 - x1;
-
-        // B-matrix rows: [eps_xx, eps_yy, gamma_xy]
-        // B = (1 / twice_area) * [[b1, 0, b2, 0, b3, 0],
-        //                          [0, c1, 0, c2, 0, c3],
-        //                          [c1, b1, c2, b2, c3, b3]]
-        let inv2a = 1.0 / twice_area;
-        let b_mat = [
-            [b1 * inv2a, 0.0, b2 * inv2a, 0.0, b3 * inv2a, 0.0],
-            [0.0, c1 * inv2a, 0.0, c2 * inv2a, 0.0, c3 * inv2a],
-            [
-                c1 * inv2a,
-                b1 * inv2a,
-                c2 * inv2a,
-                b2 * inv2a,
-                c3 * inv2a,
-                b3 * inv2a,
-            ],
-        ];
-
-        // Element displacement vector: [ux1, uy1, ux2, uy2, ux3, uy3]
-        let u_e = [
-            displacements[n0][0],
-            displacements[n0][1],
-            displacements[n1][0],
-            displacements[n1][1],
-            displacements[n2][0],
-            displacements[n2][1],
-        ];
-
-        // Strain: eps = B * u_e  (3-vector)
         let mut eps = [0.0f64; 3];
-        for (row, b_row) in b_mat.iter().enumerate() {
-            for (col, &b_val) in b_row.iter().enumerate() {
-                eps[row] += b_val * u_e[col];
+        for row in 0..3 {
+            for col in 0..u_e.len() {
+                eps[row] += b_mat_rows[row][col] * u_e[col];
             }
         }
 
-        // Stress: sigma = D * eps  (3-vector)
         let mut sigma = [0.0f64; 3];
         for (row, d_row) in d.iter().enumerate() {
             for (col, &d_val) in d_row.iter().enumerate() {
@@ -1856,8 +2539,7 @@ pub fn recover_stress_2d(
             sigma[0], sigma[1], sigma[2],
         ));
 
-        // Accumulate for nodal averaging.
-        for &node in &[n0, n1, n2] {
+        for &node in &dof_indices {
             nodal_stress_sum[node][0] += sigma[0];
             nodal_stress_sum[node][1] += sigma[1];
             nodal_stress_sum[node][2] += sigma[2];
@@ -1865,7 +2547,6 @@ pub fn recover_stress_2d(
         }
     }
 
-    // Produce nodal-averaged stress.
     let nodal_stress: Vec<StressTensor2D> = (0..node_count)
         .map(|node| {
             let count = nodal_count[node] as f64;
