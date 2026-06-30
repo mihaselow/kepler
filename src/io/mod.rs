@@ -1,3 +1,4 @@
+pub mod cad;
 pub mod gmsh;
 pub mod mesh;
 pub mod params;

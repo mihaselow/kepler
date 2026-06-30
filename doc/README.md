@@ -6,6 +6,7 @@ This directory documents the solver functionality implemented in the crate.
 
 - [Minimal FEM Solver](fem-poisson.md): 2D scalar Poisson/steady heat diffusion with P1 triangular elements.
 - [Solver Stack](solver-stack.md): linear solver backends, preconditioning, diagnostics, nonlinear solves, and transient solves.
+- [CAD To Mesh Workflows](cad-workflows.md): external CAD meshing workflow models and Gmsh command planning.
 - [Project Workflows](project-workflows.md): versioned project/job schemas and compatibility with legacy mesh/parameter workflows.
 - [REST API](rest-api.md): HTTP endpoints for running solver jobs from JSON payloads.
 - [Verification And Quality Gates](verification.md): required checks, local and CI guidance, benchmark smoke checks, test inventory, fixtures, coverage map, and known gaps.

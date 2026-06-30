@@ -28,6 +28,7 @@ const REQUIRED_TESTS: &[&str] = &[
     "tests/transient_coverage.rs",
     "tests/file_io.rs",
     "tests/mesh_import_export.rs",
+    "tests/cad_workflow.rs",
     "tests/project_workflow.rs",
     "tests/cli_project.rs",
     "tests/benchmarks.rs",

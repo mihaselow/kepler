@@ -53,6 +53,11 @@ pub use fem::poisson::{
 };
 pub use io::{
     FileIoError,
+    cad::{
+        CadFileFormat, CadLengthUnit, CadMeshOutputFormat, CadMeshingDimension, CadMeshingOptions,
+        CadMeshingWorkflow, CadSource, CadWorkflowError, ExternalCommand, ExternalMesher,
+        infer_cad_format, plan_cad_meshing_command, validate_cad_meshing_workflow,
+    },
     gmsh::{ImportedMesh, parse_gmsh_str, read_gmsh_file},
     mesh::{parse_mesh_str, read_mesh_file},
     params::{PoissonFileConfig, SourceConfig, parse_params_str, read_params_file},
