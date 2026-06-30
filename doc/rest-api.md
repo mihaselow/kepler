@@ -92,7 +92,111 @@ Errors return HTTP `400` with a JSON body:
 
 ```json
 {
-  "error": "triangle 0 contains duplicate node indices"
+  "error": "triangle 0 contains duplicate node indices",
+  "code": "bad_request"
+}
+```
+
+### `POST /projects/validate`
+
+Validates a versioned project file without solving it. The body uses a stable envelope:
+
+```json
+{
+  "project": {
+    "schema_version": 1,
+    "name": "square poisson",
+    "jobs": [
+      {
+        "id": "solve-square",
+        "mesh": {
+          "points": [
+            { "x": 0.0, "y": 0.0 },
+            { "x": 1.0, "y": 0.0 },
+            { "x": 0.0, "y": 1.0 }
+          ],
+          "triangles": [
+            { "nodes": [0, 1, 2] }
+          ]
+        },
+        "physics": {
+          "kind": "poisson",
+          "conductivity": 1.0,
+          "source": { "kind": "constant", "value": 1.0 },
+          "dirichlet": [
+            { "node": 0, "value": 0.0 },
+            { "node": 2, "value": 0.0 }
+          ],
+          "solver_options": {
+            "max_iterations": 10000,
+            "tolerance": 1e-10,
+            "backend": "dense_direct",
+            "preconditioner": "none",
+            "record_residual_history": false
+          }
+        },
+        "output": { "format": "solution" }
+      }
+    ]
+  }
+}
+```
+
+A valid project returns:
+
+```json
+{
+  "schema_version": 1,
+  "status": "valid",
+  "job_count": 1,
+  "jobs": [
+    {
+      "id": "solve-square",
+      "status": "valid",
+      "physics": "poisson",
+      "points": 3,
+      "triangles": 1
+    }
+  ]
+}
+```
+
+### `POST /projects/solve`
+
+Runs all jobs in a v1 project synchronously. The request body uses the same `{ "project": ... }` envelope as `/projects/validate`.
+
+The current implementation supports small synchronous Poisson jobs only. A successful response is also envelope-shaped:
+
+```json
+{
+  "schema_version": 1,
+  "status": "completed",
+  "jobs": [
+    {
+      "id": "solve-square",
+      "status": "completed",
+      "physics": "poisson",
+      "values": [0.0, 0.25, 0.0],
+      "iterations": 1,
+      "residual_norm": 0.0,
+      "diagnostics": {
+        "backend": "dense_direct",
+        "preconditioner": "none",
+        "converged": true,
+        "initial_residual_norm": 0.0,
+        "residual_history": []
+      }
+    }
+  ]
+}
+```
+
+Project endpoint errors use the same stable error object:
+
+```json
+{
+  "error": "unsupported project schema version 99; expected 1",
+  "code": "bad_request"
 }
 ```
 
@@ -132,4 +236,4 @@ curl -s http://127.0.0.1:3000/solve/poisson \
 
 ## Current Scope
 
-The REST API mirrors the original 2D Poisson solver scope: 2D `Tri3` meshes, constant conductivity, constant source terms, and Dirichlet boundaries. It now exposes supported linear solver backend selection, preconditioner selection, and residual-history diagnostics for that endpoint. The library also has dimension-aware topology, geometry annotation, shared condition, Gmsh import, VTK export, 3D `Tet4` Poisson, 2D/3D linear elasticity, steady heat transfer, diffusion-reaction, electrostatics, modal-analysis primitives, and a richer linalg solver stack, but this endpoint does not yet accept generic `ElementKind` payloads, named-region material assignments, arbitrary parameter assignments, general `ConditionSet` payloads, Gmsh uploads, VTK downloads, 3D meshes, heat problems, diffusion-reaction problems, electrostatics problems, elasticity problems, modal problems, nonlinear solves, or transient solves. It does not yet provide asynchronous job storage, uploaded mesh files, authentication, or multiple physics endpoints.
+The REST API still focuses on small synchronous 2D Poisson solves. `/solve/poisson` preserves the original direct endpoint, while `/projects/validate` and `/projects/solve` introduce versioned project envelopes for the same supported physics. The library also has dimension-aware topology, geometry annotation, shared condition, Gmsh import, VTK export, 3D `Tet4` Poisson, 2D/3D linear elasticity, steady heat transfer, diffusion-reaction, electrostatics, modal-analysis primitives, and a richer linalg solver stack, but the REST project endpoints do not yet accept generic `ElementKind` payloads, named-region material assignments, arbitrary parameter assignments, general `ConditionSet` payloads, Gmsh uploads, VTK downloads, 3D meshes, heat problems, diffusion-reaction problems, electrostatics problems, elasticity problems, modal problems, nonlinear solves, or transient solves. They do not yet provide asynchronous job storage, cancellation, uploaded mesh files, authentication, or result artifact downloads.

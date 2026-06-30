@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use kepler::{
     LinearSolverBackend, LinearSolverOptions, Mesh, Point2, PoissonProblem, PreconditionerKind,
-    SolverDiagnostics, SolverOptions, Tri3, solve_poisson_with_solver,
+    ProjectFile, ProjectPhysics, SolverDiagnostics, SolverOptions, Tri3, job_to_poisson,
+    solve_poisson_with_solver, validate_project,
 };
 
 #[tokio::main]
@@ -39,6 +40,8 @@ fn app() -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/solve/poisson", post(solve_poisson_endpoint))
+        .route("/projects/validate", post(validate_project_endpoint))
+        .route("/projects/solve", post(solve_project_endpoint))
 }
 
 async fn health() -> Json<HealthResponse> {
@@ -90,6 +93,56 @@ async fn solve_poisson_endpoint(
     }))
 }
 
+async fn validate_project_endpoint(
+    Json(request): Json<ProjectEnvelopeRequest>,
+) -> Result<Json<ProjectValidationResponse>, ApiError> {
+    validate_project(&request.project)?;
+    Ok(Json(ProjectValidationResponse {
+        schema_version: request.project.schema_version,
+        status: "valid",
+        job_count: request.project.jobs.len(),
+        jobs: request
+            .project
+            .jobs
+            .iter()
+            .map(ProjectJobSummaryResponse::from)
+            .collect(),
+    }))
+}
+
+async fn solve_project_endpoint(
+    Json(request): Json<ProjectEnvelopeRequest>,
+) -> Result<Json<ProjectSolveResponse>, ApiError> {
+    validate_project(&request.project)?;
+    let mut jobs = Vec::with_capacity(request.project.jobs.len());
+
+    for job in &request.project.jobs {
+        let (mesh, config) = job_to_poisson(job)?;
+        let source = config.source;
+        let problem = PoissonProblem {
+            conductivity: config.conductivity,
+            source: move |x, y| source.value_at(x, y),
+            dirichlet: config.dirichlet,
+        };
+        let result = solve_poisson_with_solver(&mesh, &problem, config.solver_options)?;
+        jobs.push(ProjectSolveJobResponse {
+            id: job.id.clone(),
+            status: "completed",
+            physics: physics_name(&job.physics),
+            values: result.values,
+            iterations: result.diagnostics.iterations,
+            residual_norm: result.diagnostics.residual_norm,
+            diagnostics: DiagnosticsResponse::from(result.diagnostics),
+        });
+    }
+
+    Ok(Json(ProjectSolveResponse {
+        schema_version: request.project.schema_version,
+        status: "completed",
+        jobs,
+    }))
+}
+
 fn parse_addr(args: impl IntoIterator<Item = String>) -> Result<SocketAddr, String> {
     let mut args = args.into_iter();
     let Some(first) = args.next() else {
@@ -135,6 +188,11 @@ struct SolvePoissonRequest {
     problem: ProblemRequest,
     #[serde(default)]
     solver_options: Option<SolverOptionsRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectEnvelopeRequest {
+    project: ProjectFile,
 }
 
 #[derive(Debug, Deserialize)]
@@ -222,6 +280,53 @@ struct SolvePoissonResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct ProjectValidationResponse {
+    schema_version: u32,
+    status: &'static str,
+    job_count: usize,
+    jobs: Vec<ProjectJobSummaryResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct ProjectJobSummaryResponse {
+    id: String,
+    status: &'static str,
+    physics: &'static str,
+    points: usize,
+    triangles: usize,
+}
+
+impl From<&kepler::ProjectJob> for ProjectJobSummaryResponse {
+    fn from(value: &kepler::ProjectJob) -> Self {
+        Self {
+            id: value.id.clone(),
+            status: "valid",
+            physics: physics_name(&value.physics),
+            points: value.mesh.points.len(),
+            triangles: value.mesh.triangles.len(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ProjectSolveResponse {
+    schema_version: u32,
+    status: &'static str,
+    jobs: Vec<ProjectSolveJobResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct ProjectSolveJobResponse {
+    id: String,
+    status: &'static str,
+    physics: &'static str,
+    values: Vec<f64>,
+    iterations: usize,
+    residual_norm: f64,
+    diagnostics: DiagnosticsResponse,
+}
+
+#[derive(Debug, Serialize)]
 struct DiagnosticsResponse {
     backend: &'static str,
     preconditioner: &'static str,
@@ -252,6 +357,7 @@ impl From<SolverDiagnostics> for DiagnosticsResponse {
 #[derive(Debug, Serialize)]
 struct ErrorResponse {
     error: String,
+    code: &'static str,
 }
 
 #[derive(Debug)]
@@ -282,6 +388,7 @@ impl IntoResponse for ApiError {
             self.status,
             Json(ErrorResponse {
                 error: self.message,
+                code: "bad_request",
             }),
         )
             .into_response()
@@ -297,6 +404,18 @@ impl From<kepler::MeshError> for ApiError {
 impl From<kepler::fem::poisson::PoissonError> for ApiError {
     fn from(value: kepler::fem::poisson::PoissonError) -> Self {
         Self::bad_request(value)
+    }
+}
+
+impl From<kepler::ProjectError> for ApiError {
+    fn from(value: kepler::ProjectError) -> Self {
+        Self::bad_request(value)
+    }
+}
+
+fn physics_name(physics: &ProjectPhysics) -> &'static str {
+    match physics {
+        ProjectPhysics::Poisson(_) => "poisson",
     }
 }
 
@@ -432,6 +551,81 @@ mod tests {
         assert!(body["error"].as_str().unwrap().contains("duplicate"));
     }
 
+    #[tokio::test]
+    async fn project_validate_endpoint_accepts_project_envelope() {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/projects/validate")
+                    .header("content-type", "application/json")
+                    .body(Body::from(project_request().to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["status"], json!("valid"));
+        assert_eq!(body["job_count"], json!(1));
+        assert_eq!(body["jobs"][0]["id"], json!("solve-square"));
+        assert_eq!(body["jobs"][0]["physics"], json!("poisson"));
+    }
+
+    #[tokio::test]
+    async fn project_solve_endpoint_runs_synchronous_poisson_job() {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/projects/solve")
+                    .header("content-type", "application/json")
+                    .body(Body::from(project_request().to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["status"], json!("completed"));
+        assert_eq!(body["jobs"][0]["status"], json!("completed"));
+        assert_eq!(body["jobs"][0]["values"][4], json!(1.0 / 12.0));
+        assert_eq!(
+            body["jobs"][0]["diagnostics"]["backend"],
+            json!("dense_direct")
+        );
+    }
+
+    #[tokio::test]
+    async fn project_endpoint_returns_stable_error_schema() {
+        let mut request = project_request();
+        request["project"]["schema_version"] = json!(99);
+
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/projects/validate")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = body_json(response).await;
+        assert_eq!(body["code"], json!("bad_request"));
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("schema version 99")
+        );
+    }
+
     async fn body_json(response: axum::response::Response) -> Value {
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         serde_json::from_slice(&body).unwrap()
@@ -467,6 +661,54 @@ mod tests {
             "solver_options": {
                 "max_iterations": 10000,
                 "tolerance": 1e-10
+            }
+        })
+    }
+
+    fn project_request() -> Value {
+        json!({
+            "project": {
+                "schema_version": 1,
+                "name": "server project",
+                "jobs": [
+                    {
+                        "id": "solve-square",
+                        "mesh": {
+                            "points": [
+                                { "x": 0.0, "y": 0.0 },
+                                { "x": 1.0, "y": 0.0 },
+                                { "x": 1.0, "y": 1.0 },
+                                { "x": 0.0, "y": 1.0 },
+                                { "x": 0.5, "y": 0.5 }
+                            ],
+                            "triangles": [
+                                { "nodes": [0, 1, 4] },
+                                { "nodes": [1, 2, 4] },
+                                { "nodes": [2, 3, 4] },
+                                { "nodes": [3, 0, 4] }
+                            ]
+                        },
+                        "physics": {
+                            "kind": "poisson",
+                            "conductivity": 1.0,
+                            "source": { "kind": "constant", "value": 1.0 },
+                            "dirichlet": [
+                                { "node": 0, "value": 0.0 },
+                                { "node": 1, "value": 0.0 },
+                                { "node": 2, "value": 0.0 },
+                                { "node": 3, "value": 0.0 }
+                            ],
+                            "solver_options": {
+                                "max_iterations": 10000,
+                                "tolerance": 1e-10,
+                                "backend": "dense_direct",
+                                "preconditioner": "none",
+                                "record_residual_history": false
+                            }
+                        },
+                        "output": { "format": "solution" }
+                    }
+                ]
             }
         })
     }
