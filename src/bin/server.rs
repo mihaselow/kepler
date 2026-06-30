@@ -1,7 +1,17 @@
-use std::{env, net::SocketAddr, process};
+use std::{
+    collections::BTreeMap,
+    env,
+    net::SocketAddr,
+    process,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use axum::{
     Json, Router,
+    extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -37,11 +47,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn app() -> Router {
+    app_with_state(AppState::default())
+}
+
+fn app_with_state(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/solve/poisson", post(solve_poisson_endpoint))
         .route("/projects/validate", post(validate_project_endpoint))
         .route("/projects/solve", post(solve_project_endpoint))
+        .route("/projects/jobs", post(submit_project_job_endpoint))
+        .route("/projects/jobs/{job_id}", get(project_job_status_endpoint))
+        .route(
+            "/projects/jobs/{job_id}/cancel",
+            post(cancel_project_job_endpoint),
+        )
+        .route(
+            "/projects/jobs/{job_id}/result",
+            get(project_job_result_endpoint),
+        )
+        .with_state(state)
 }
 
 async fn health() -> Json<HealthResponse> {
@@ -113,34 +138,66 @@ async fn validate_project_endpoint(
 async fn solve_project_endpoint(
     Json(request): Json<ProjectEnvelopeRequest>,
 ) -> Result<Json<ProjectSolveResponse>, ApiError> {
+    solve_project(&request.project).map(Json)
+}
+
+async fn submit_project_job_endpoint(
+    State(state): State<AppState>,
+    Json(request): Json<ProjectEnvelopeRequest>,
+) -> Result<Json<AsyncProjectSubmitResponse>, ApiError> {
     validate_project(&request.project)?;
-    let mut jobs = Vec::with_capacity(request.project.jobs.len());
+    let job_id = state.next_job_id();
+    state.insert_job(&job_id, request.project.clone());
+    let worker_state = state.clone();
+    let worker_job_id = job_id.clone();
+    let project = request.project;
 
-    for job in &request.project.jobs {
-        let (mesh, config) = job_to_poisson(job)?;
-        let source = config.source;
-        let problem = PoissonProblem {
-            conductivity: config.conductivity,
-            source: move |x, y| source.value_at(x, y),
-            dirichlet: config.dirichlet,
-        };
-        let result = solve_poisson_with_solver(&mesh, &problem, config.solver_options)?;
-        jobs.push(ProjectSolveJobResponse {
-            id: job.id.clone(),
-            status: "completed",
-            physics: physics_name(&job.physics),
-            values: result.values,
-            iterations: result.diagnostics.iterations,
-            residual_norm: result.diagnostics.residual_norm,
-            diagnostics: DiagnosticsResponse::from(result.diagnostics),
-        });
-    }
+    tokio::spawn(async move {
+        run_project_job(worker_state, worker_job_id, project);
+    });
 
-    Ok(Json(ProjectSolveResponse {
-        schema_version: request.project.schema_version,
-        status: "completed",
-        jobs,
+    Ok(Json(AsyncProjectSubmitResponse {
+        job_id: job_id.clone(),
+        status: "queued",
+        status_url: format!("/projects/jobs/{job_id}"),
+        result_url: format!("/projects/jobs/{job_id}/result"),
     }))
+}
+
+async fn project_job_status_endpoint(
+    State(state): State<AppState>,
+    Path(job_id): Path<String>,
+) -> Result<Json<AsyncProjectStatusResponse>, ApiError> {
+    let record = state
+        .job_snapshot(&job_id)
+        .ok_or_else(|| ApiError::not_found(format!("unknown project job '{job_id}'")))?;
+    Ok(Json(AsyncProjectStatusResponse::from_record(
+        job_id, &record,
+    )))
+}
+
+async fn cancel_project_job_endpoint(
+    State(state): State<AppState>,
+    Path(job_id): Path<String>,
+) -> Result<Json<AsyncProjectStatusResponse>, ApiError> {
+    let record = state
+        .cancel_job(&job_id)
+        .ok_or_else(|| ApiError::not_found(format!("unknown project job '{job_id}'")))?;
+    Ok(Json(AsyncProjectStatusResponse::from_record(
+        job_id, &record,
+    )))
+}
+
+async fn project_job_result_endpoint(
+    State(state): State<AppState>,
+    Path(job_id): Path<String>,
+) -> Result<Json<AsyncProjectResultResponse>, ApiError> {
+    let record = state
+        .job_snapshot(&job_id)
+        .ok_or_else(|| ApiError::not_found(format!("unknown project job '{job_id}'")))?;
+    Ok(Json(AsyncProjectResultResponse::from_record(
+        job_id, &record,
+    )))
 }
 
 fn parse_addr(args: impl IntoIterator<Item = String>) -> Result<SocketAddr, String> {
@@ -175,6 +232,170 @@ fn default_addr() -> SocketAddr {
 
 fn usage() -> String {
     "usage: server [--addr <ip:port>]".to_owned()
+}
+
+#[derive(Debug, Clone, Default)]
+struct AppState {
+    jobs: Arc<Mutex<BTreeMap<String, AsyncProjectJobRecord>>>,
+    next_job: Arc<AtomicU64>,
+}
+
+impl AppState {
+    fn next_job_id(&self) -> String {
+        let id = self.next_job.fetch_add(1, Ordering::Relaxed) + 1;
+        format!("project-job-{id}")
+    }
+
+    fn insert_job(&self, job_id: &str, project: ProjectFile) {
+        let mut jobs = self.jobs.lock().expect("job store mutex poisoned");
+        jobs.insert(
+            job_id.to_owned(),
+            AsyncProjectJobRecord {
+                status: AsyncProjectJobStatus::Queued,
+                project,
+                logs: vec!["job accepted".to_owned()],
+                result: None,
+                error: None,
+                cancellation_requested: false,
+            },
+        );
+    }
+
+    fn job_snapshot(&self, job_id: &str) -> Option<AsyncProjectJobRecord> {
+        self.jobs
+            .lock()
+            .expect("job store mutex poisoned")
+            .get(job_id)
+            .cloned()
+    }
+
+    fn cancel_job(&self, job_id: &str) -> Option<AsyncProjectJobRecord> {
+        let mut jobs = self.jobs.lock().expect("job store mutex poisoned");
+        let record = jobs.get_mut(job_id)?;
+        record.cancellation_requested = true;
+        match record.status {
+            AsyncProjectJobStatus::Queued | AsyncProjectJobStatus::Running => {
+                record.status = AsyncProjectJobStatus::Cancelled;
+                record.logs.push("cancellation requested".to_owned());
+            }
+            AsyncProjectJobStatus::Completed
+            | AsyncProjectJobStatus::Failed
+            | AsyncProjectJobStatus::Cancelled => {
+                record
+                    .logs
+                    .push("cancellation requested after terminal state".to_owned());
+            }
+        }
+        Some(record.clone())
+    }
+
+    fn mark_running(&self, job_id: &str) -> bool {
+        let mut jobs = self.jobs.lock().expect("job store mutex poisoned");
+        let Some(record) = jobs.get_mut(job_id) else {
+            return false;
+        };
+        if record.cancellation_requested || record.status == AsyncProjectJobStatus::Cancelled {
+            return false;
+        }
+        record.status = AsyncProjectJobStatus::Running;
+        record.logs.push("job started".to_owned());
+        true
+    }
+
+    fn complete_job(&self, job_id: &str, result: Result<ProjectSolveResponse, String>) {
+        let mut jobs = self.jobs.lock().expect("job store mutex poisoned");
+        let Some(record) = jobs.get_mut(job_id) else {
+            return;
+        };
+        if record.status == AsyncProjectJobStatus::Cancelled {
+            record
+                .logs
+                .push("worker finished after cancellation".to_owned());
+            return;
+        }
+        match result {
+            Ok(result) => {
+                record.status = AsyncProjectJobStatus::Completed;
+                record.logs.push("job completed".to_owned());
+                record.result = Some(result);
+            }
+            Err(error) => {
+                record.status = AsyncProjectJobStatus::Failed;
+                record.logs.push(format!("job failed: {error}"));
+                record.error = Some(error);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AsyncProjectJobStatus {
+    Queued,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+impl AsyncProjectJobStatus {
+    const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AsyncProjectJobRecord {
+    status: AsyncProjectJobStatus,
+    project: ProjectFile,
+    logs: Vec<String>,
+    result: Option<ProjectSolveResponse>,
+    error: Option<String>,
+    cancellation_requested: bool,
+}
+
+fn run_project_job(state: AppState, job_id: String, project: ProjectFile) {
+    if !state.mark_running(&job_id) {
+        return;
+    }
+    let result = solve_project(&project).map_err(|error| error.message);
+    state.complete_job(&job_id, result);
+}
+
+fn solve_project(project: &ProjectFile) -> Result<ProjectSolveResponse, ApiError> {
+    validate_project(project)?;
+    let mut jobs = Vec::with_capacity(project.jobs.len());
+
+    for job in &project.jobs {
+        let (mesh, config) = job_to_poisson(job)?;
+        let source = config.source;
+        let problem = PoissonProblem {
+            conductivity: config.conductivity,
+            source: move |x, y| source.value_at(x, y),
+            dirichlet: config.dirichlet,
+        };
+        let result = solve_poisson_with_solver(&mesh, &problem, config.solver_options)?;
+        jobs.push(ProjectSolveJobResponse {
+            id: job.id.clone(),
+            status: "completed",
+            physics: physics_name(&job.physics),
+            values: result.values,
+            iterations: result.diagnostics.iterations,
+            residual_norm: result.diagnostics.residual_norm,
+            diagnostics: DiagnosticsResponse::from(result.diagnostics),
+        });
+    }
+
+    Ok(ProjectSolveResponse {
+        schema_version: project.schema_version,
+        status: "completed",
+        jobs,
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -279,7 +500,7 @@ struct SolvePoissonResponse {
     diagnostics: DiagnosticsResponse,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct ProjectValidationResponse {
     schema_version: u32,
     status: &'static str,
@@ -287,7 +508,7 @@ struct ProjectValidationResponse {
     jobs: Vec<ProjectJobSummaryResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct ProjectJobSummaryResponse {
     id: String,
     status: &'static str,
@@ -308,14 +529,14 @@ impl From<&kepler::ProjectJob> for ProjectJobSummaryResponse {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct ProjectSolveResponse {
     schema_version: u32,
     status: &'static str,
     jobs: Vec<ProjectSolveJobResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct ProjectSolveJobResponse {
     id: String,
     status: &'static str,
@@ -326,13 +547,67 @@ struct ProjectSolveJobResponse {
     diagnostics: DiagnosticsResponse,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct DiagnosticsResponse {
     backend: &'static str,
     preconditioner: &'static str,
     converged: bool,
     initial_residual_norm: f64,
     residual_history: Vec<f64>,
+}
+
+#[derive(Debug, Serialize)]
+struct AsyncProjectSubmitResponse {
+    job_id: String,
+    status: &'static str,
+    status_url: String,
+    result_url: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AsyncProjectStatusResponse {
+    job_id: String,
+    status: &'static str,
+    schema_version: u32,
+    project_job_count: usize,
+    logs: Vec<String>,
+    error: Option<String>,
+    result_url: String,
+}
+
+impl AsyncProjectStatusResponse {
+    fn from_record(job_id: String, record: &AsyncProjectJobRecord) -> Self {
+        Self {
+            result_url: format!("/projects/jobs/{job_id}/result"),
+            job_id,
+            status: record.status.as_str(),
+            schema_version: record.project.schema_version,
+            project_job_count: record.project.jobs.len(),
+            logs: record.logs.clone(),
+            error: record.error.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct AsyncProjectResultResponse {
+    job_id: String,
+    status: &'static str,
+    result: Option<ProjectSolveResponse>,
+    error: Option<String>,
+    logs: Vec<String>,
+}
+
+impl AsyncProjectResultResponse {
+    fn from_record(job_id: String, record: &AsyncProjectJobRecord) -> Self {
+        Self {
+            job_id,
+            status: record.status.as_str(),
+            result: record.result.clone(),
+            error: record.error.clone(),
+            logs: record.logs.clone(),
+        }
+    }
 }
 
 impl From<SolverDiagnostics> for DiagnosticsResponse {
@@ -377,6 +652,13 @@ impl ApiError {
     fn message(message: String) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
+            message,
+        }
+    }
+
+    fn not_found(message: String) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
             message,
         }
     }
@@ -626,9 +908,172 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn async_project_job_runs_to_result() {
+        let app = app();
+        let submit_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/projects/jobs")
+                    .header("content-type", "application/json")
+                    .body(Body::from(project_request().to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(submit_response.status(), StatusCode::OK);
+        let submit_body = body_json(submit_response).await;
+        let job_id = submit_body["job_id"].as_str().unwrap();
+        assert_eq!(submit_body["status"], json!("queued"));
+
+        let result_body = poll_async_result(app, job_id).await;
+        assert_eq!(result_body["status"], json!("completed"));
+        assert_eq!(
+            result_body["result"]["jobs"][0]["values"][4],
+            json!(1.0 / 12.0)
+        );
+        assert!(
+            result_body["logs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry == "job completed")
+        );
+    }
+
+    #[tokio::test]
+    async fn async_project_job_status_reports_logs() {
+        let app = app();
+        let submit_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/projects/jobs")
+                    .header("content-type", "application/json")
+                    .body(Body::from(project_request().to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let submit_body = body_json(submit_response).await;
+        let job_id = submit_body["job_id"].as_str().unwrap();
+        let _ = poll_async_result(app.clone(), job_id).await;
+
+        let status_response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/projects/jobs/{job_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(status_response.status(), StatusCode::OK);
+        let status_body = body_json(status_response).await;
+        assert_eq!(status_body["job_id"], json!(job_id));
+        assert_eq!(status_body["status"], json!("completed"));
+        assert_eq!(status_body["project_job_count"], json!(1));
+        assert!(status_body["result_url"].as_str().unwrap().contains(job_id));
+    }
+
+    #[tokio::test]
+    async fn async_project_job_cancel_hook_is_available() {
+        let app = app();
+        let submit_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/projects/jobs")
+                    .header("content-type", "application/json")
+                    .body(Body::from(project_request().to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let submit_body = body_json(submit_response).await;
+        let job_id = submit_body["job_id"].as_str().unwrap();
+
+        let cancel_response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/projects/jobs/{job_id}/cancel"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(cancel_response.status(), StatusCode::OK);
+        let cancel_body = body_json(cancel_response).await;
+        assert_eq!(cancel_body["job_id"], json!(job_id));
+        assert!(
+            ["cancelled", "completed", "running", "queued"]
+                .contains(&cancel_body["status"].as_str().unwrap())
+        );
+        assert!(
+            cancel_body["logs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry.as_str().unwrap().contains("cancellation requested"))
+        );
+    }
+
+    #[tokio::test]
+    async fn async_project_job_unknown_id_returns_not_found() {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .uri("/projects/jobs/missing/result")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = body_json(response).await;
+        assert_eq!(body["code"], json!("bad_request"));
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("unknown project job")
+        );
+    }
+
     async fn body_json(response: axum::response::Response) -> Value {
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         serde_json::from_slice(&body).unwrap()
+    }
+
+    async fn poll_async_result(app: Router, job_id: &str) -> Value {
+        for _ in 0..10 {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/projects/jobs/{job_id}/result"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = body_json(response).await;
+            if body["status"] == json!("completed") || body["status"] == json!("failed") {
+                return body;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("async project job did not reach terminal state");
     }
 
     fn square_request() -> Value {

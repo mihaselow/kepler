@@ -200,6 +200,63 @@ Project endpoint errors use the same stable error object:
 }
 ```
 
+### `POST /projects/jobs`
+
+Submits a v1 project for asynchronous in-memory execution. The request body uses the same `{ "project": ... }` envelope as `/projects/validate`.
+
+Response:
+
+```json
+{
+  "job_id": "project-job-1",
+  "status": "queued",
+  "status_url": "/projects/jobs/project-job-1",
+  "result_url": "/projects/jobs/project-job-1/result"
+}
+```
+
+The server stores submitted jobs in memory and starts a background task immediately. This is intended as a first workflow API layer, not durable production job storage.
+
+### `GET /projects/jobs/{job_id}`
+
+Returns job status, logs, and result location:
+
+```json
+{
+  "job_id": "project-job-1",
+  "status": "completed",
+  "schema_version": 1,
+  "project_job_count": 1,
+  "logs": ["job accepted", "job started", "job completed"],
+  "error": null,
+  "result_url": "/projects/jobs/project-job-1/result"
+}
+```
+
+Status values are `queued`, `running`, `completed`, `failed`, and `cancelled`.
+
+### `POST /projects/jobs/{job_id}/cancel`
+
+Requests cancellation for an in-memory job and returns the same status shape as `GET /projects/jobs/{job_id}`. Cancellation is currently a state hook: queued/running jobs are marked cancelled when observed by the job store, but already-running small Poisson solves may complete before the cancellation request is processed.
+
+### `GET /projects/jobs/{job_id}/result`
+
+Returns the current result envelope. Pending jobs return `result: null`; completed jobs include the same `ProjectSolveResponse` shape used by `/projects/solve`.
+
+```json
+{
+  "job_id": "project-job-1",
+  "status": "completed",
+  "result": {
+    "schema_version": 1,
+    "status": "completed",
+    "jobs": []
+  },
+  "error": null,
+  "logs": ["job accepted", "job started", "job completed"]
+}
+```
+
 ## Curl Example
 
 ```shell
@@ -236,4 +293,4 @@ curl -s http://127.0.0.1:3000/solve/poisson \
 
 ## Current Scope
 
-The REST API still focuses on small synchronous 2D Poisson solves. `/solve/poisson` preserves the original direct endpoint, while `/projects/validate` and `/projects/solve` introduce versioned project envelopes for the same supported physics. The library also has dimension-aware topology, geometry annotation, shared condition, Gmsh import, VTK export, 3D `Tet4` Poisson, 2D/3D linear elasticity, steady heat transfer, diffusion-reaction, electrostatics, modal-analysis primitives, and a richer linalg solver stack, but the REST project endpoints do not yet accept generic `ElementKind` payloads, named-region material assignments, arbitrary parameter assignments, general `ConditionSet` payloads, Gmsh uploads, VTK downloads, 3D meshes, heat problems, diffusion-reaction problems, electrostatics problems, elasticity problems, modal problems, nonlinear solves, or transient solves. They do not yet provide asynchronous job storage, cancellation, uploaded mesh files, authentication, or result artifact downloads.
+The REST API still focuses on small 2D Poisson solves. `/solve/poisson` preserves the original direct endpoint, while `/projects/validate`, `/projects/solve`, and `/projects/jobs` introduce versioned project envelopes for the same supported physics. The library also has dimension-aware topology, geometry annotation, shared condition, Gmsh import, VTK export, 3D `Tet4` Poisson, 2D/3D linear elasticity, steady heat transfer, diffusion-reaction, electrostatics, modal-analysis primitives, and a richer linalg solver stack, but the REST project endpoints do not yet accept generic `ElementKind` payloads, named-region material assignments, arbitrary parameter assignments, general `ConditionSet` payloads, Gmsh uploads, VTK downloads, 3D meshes, heat problems, diffusion-reaction problems, electrostatics problems, elasticity problems, modal problems, nonlinear solves, or transient solves. Async jobs are stored in memory only; they are lost when the server exits and do not yet support durable persistence, worker pools, authentication, uploaded mesh files, or result artifact downloads.
