@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use kepler::{
     LinearSolverBackend, LinearSolverOptions, Mesh, Point2, PoissonProblem, PreconditionerKind,
     ProjectFile, ProjectPhysics, SolverDiagnostics, SolverOptions, Tri3, job_to_poisson,
+    job_to_elasticity, job_to_elasticity_3d, job_to_modal, job_to_modal_3d,
     parse_mesh_str, parse_params_str, parse_project_str, solve_poisson_with_solver,
     validate_project,
 };
@@ -441,23 +442,84 @@ fn solve_project(project: &ProjectFile) -> Result<ProjectSolveResponse, ApiError
     let mut jobs = Vec::with_capacity(project.jobs.len());
 
     for job in &project.jobs {
-        let (mesh, config) = job_to_poisson(job)?;
-        let source = config.source;
-        let problem = PoissonProblem {
-            conductivity: config.conductivity,
-            source: move |x, y| source.value_at(x, y),
-            dirichlet: config.dirichlet,
+        let job_response = match &job.physics {
+            ProjectPhysics::Poisson(_) => {
+                let (mesh, config) = job_to_poisson(job)?;
+                let source = config.source;
+                let problem = PoissonProblem {
+                    conductivity: config.conductivity,
+                    source: move |x, y| source.value_at(x, y),
+                    dirichlet: config.dirichlet,
+                };
+                let result = solve_poisson_with_solver(&mesh, &problem, config.solver_options)?;
+                ProjectSolveJobResponse {
+                    id: job.id.clone(),
+                    status: "completed",
+                    physics: "poisson",
+                    values: result.values,
+                    iterations: result.diagnostics.iterations,
+                    residual_norm: result.diagnostics.residual_norm,
+                    diagnostics: DiagnosticsResponse::from(result.diagnostics),
+                }
+            }
+            ProjectPhysics::Elasticity(_) => {
+                let (mesh, problem, options) = job_to_elasticity(job)?;
+                let result = kepler::solve_elasticity_with_solver(&mesh, &problem, options)?;
+                let flat_values: Vec<f64> = result.displacements.into_iter().flat_map(|d| d.to_vec()).collect();
+                ProjectSolveJobResponse {
+                    id: job.id.clone(),
+                    status: "completed",
+                    physics: "elasticity",
+                    values: flat_values,
+                    iterations: result.diagnostics.iterations,
+                    residual_norm: result.diagnostics.residual_norm,
+                    diagnostics: DiagnosticsResponse::from(result.diagnostics),
+                }
+            }
+            ProjectPhysics::Elasticity3d(_) => {
+                let (mesh, problem, options) = job_to_elasticity_3d(job)?;
+                let result = kepler::solve_elasticity_3d_with_solver(&mesh, &problem, options)?;
+                let flat_values: Vec<f64> = result.displacements.into_iter().flat_map(|d| d.to_vec()).collect();
+                ProjectSolveJobResponse {
+                    id: job.id.clone(),
+                    status: "completed",
+                    physics: "elasticity_3d",
+                    values: flat_values,
+                    iterations: result.diagnostics.iterations,
+                    residual_norm: result.diagnostics.residual_norm,
+                    diagnostics: DiagnosticsResponse::from(result.diagnostics),
+                }
+            }
+            ProjectPhysics::Modal(_) => {
+                let (mesh, problem, _options) = job_to_modal(job)?;
+                let result = kepler::solve_modal(&mesh, &problem)?;
+                let frequencies: Vec<f64> = result.modes.into_iter().map(|m| m.frequency_hz).collect();
+                ProjectSolveJobResponse {
+                    id: job.id.clone(),
+                    status: "completed",
+                    physics: "modal",
+                    values: frequencies,
+                    iterations: 0,
+                    residual_norm: 0.0,
+                    diagnostics: DiagnosticsResponse::default(),
+                }
+            }
+            ProjectPhysics::Modal3d(_) => {
+                let (mesh, problem, _options) = job_to_modal_3d(job)?;
+                let result = kepler::solve_modal_3d(&mesh, &problem)?;
+                let frequencies: Vec<f64> = result.modes.into_iter().map(|m| m.frequency_hz).collect();
+                ProjectSolveJobResponse {
+                    id: job.id.clone(),
+                    status: "completed",
+                    physics: "modal_3d",
+                    values: frequencies,
+                    iterations: 0,
+                    residual_norm: 0.0,
+                    diagnostics: DiagnosticsResponse::default(),
+                }
+            }
         };
-        let result = solve_poisson_with_solver(&mesh, &problem, config.solver_options)?;
-        jobs.push(ProjectSolveJobResponse {
-            id: job.id.clone(),
-            status: "completed",
-            physics: physics_name(&job.physics),
-            values: result.values,
-            iterations: result.diagnostics.iterations,
-            residual_norm: result.diagnostics.residual_norm,
-            diagnostics: DiagnosticsResponse::from(result.diagnostics),
-        });
+        jobs.push(job_response);
     }
 
     Ok(ProjectSolveResponse {
@@ -647,8 +709,11 @@ impl From<&kepler::ProjectJob> for ProjectJobSummaryResponse {
             id: value.id.clone(),
             status: "valid",
             physics: physics_name(&value.physics),
-            points: value.mesh.points.len(),
-            triangles: value.mesh.triangles.len(),
+            points: value.mesh.points.as_ref().map(|p| p.len())
+                .or_else(|| value.mesh.points_3d.as_ref().map(|p| p.len()))
+                .unwrap_or(0),
+            triangles: value.mesh.cells.as_ref().map(|c| c.len())
+                .unwrap_or_else(|| value.mesh.triangles.len()),
         }
     }
 }
@@ -857,6 +922,18 @@ impl From<kepler::fem::poisson::PoissonError> for ApiError {
     }
 }
 
+impl From<kepler::fem::elasticity::ElasticityError> for ApiError {
+    fn from(value: kepler::fem::elasticity::ElasticityError) -> Self {
+        Self::bad_request(value)
+    }
+}
+
+impl From<kepler::fem::modal::ModalError> for ApiError {
+    fn from(value: kepler::fem::modal::ModalError) -> Self {
+        Self::bad_request(value)
+    }
+}
+
 impl From<kepler::ProjectError> for ApiError {
     fn from(value: kepler::ProjectError) -> Self {
         Self::bad_request(value)
@@ -869,9 +946,25 @@ impl From<kepler::FileIoError> for ApiError {
     }
 }
 
+impl Default for DiagnosticsResponse {
+    fn default() -> Self {
+        Self {
+            backend: "none",
+            preconditioner: "none",
+            converged: true,
+            initial_residual_norm: 0.0,
+            residual_history: vec![],
+        }
+    }
+}
+
 fn physics_name(physics: &ProjectPhysics) -> &'static str {
     match physics {
         ProjectPhysics::Poisson(_) => "poisson",
+        ProjectPhysics::Elasticity(_) => "elasticity",
+        ProjectPhysics::Elasticity3d(_) => "elasticity_3d",
+        ProjectPhysics::Modal(_) => "modal",
+        ProjectPhysics::Modal3d(_) => "modal_3d",
     }
 }
 

@@ -151,7 +151,10 @@ fn project_rejects_duplicate_job_ids() {
 #[test]
 fn project_rejects_out_of_bounds_dirichlet_nodes() {
     let mut project = parse_project_str(PROJECT_JSON).unwrap();
-    let kepler::ProjectPhysics::Poisson(problem) = &mut project.jobs[0].physics;
+    let problem = match &mut project.jobs[0].physics {
+        kepler::ProjectPhysics::Poisson(p) => p,
+        _ => panic!("expected Poisson physics"),
+    };
     problem.dirichlet.push(kepler::ProjectDirichlet {
         node: 10,
         value: 0.0,
@@ -183,4 +186,116 @@ fn project_solver_options_have_schema_defaults() {
         options.max_iterations,
         kepler::SolverOptions::default().max_iterations
     );
+}
+
+#[test]
+fn test_multi_physics_project_mapping() {
+    let json = r#"
+    {
+      "schema_version": 1,
+      "name": "multi-physics demo",
+      "jobs": [
+        {
+          "id": "elasticity-2d",
+          "mesh": {
+            "points": [
+              { "x": 0.0, "y": 0.0 },
+              { "x": 1.0, "y": 0.0 },
+              { "x": 1.0, "y": 1.0 },
+              { "x": 0.0, "y": 1.0 }
+            ],
+            "cells": [
+              { "kind": "quad4", "nodes": [0, 1, 2, 3] }
+            ]
+          },
+          "physics": {
+            "kind": "elasticity",
+            "material": {
+              "young_modulus": 200e9,
+              "poisson_ratio": 0.3,
+              "model": "plane_stress"
+            },
+            "thickness": 0.1,
+            "constraints": [
+              { "node": 0, "component": "x", "value": 0.0 },
+              { "node": 0, "component": "y", "value": 0.0 }
+            ],
+            "forces": [
+              { "node": 2, "component": "x", "value": 1000.0 }
+            ],
+            "solver_options": {
+              "max_iterations": 100,
+              "tolerance": 1e-6,
+              "backend": "sparse_ldl",
+              "preconditioner": "none",
+              "record_residual_history": false
+            }
+          }
+        },
+        {
+          "id": "modal-3d",
+          "mesh": {
+            "points_3d": [
+              { "x": 0.0, "y": 0.0, "z": 0.0 },
+              { "x": 1.0, "y": 0.0, "z": 0.0 },
+              { "x": 1.0, "y": 1.0, "z": 0.0 },
+              { "x": 0.0, "y": 1.0, "z": 0.0 },
+              { "x": 0.0, "y": 0.0, "z": 1.0 },
+              { "x": 1.0, "y": 0.0, "z": 1.0 },
+              { "x": 1.0, "y": 1.0, "z": 1.0 },
+              { "x": 0.0, "y": 1.0, "z": 1.0 }
+            ],
+            "cells": [
+              { "kind": "hex8", "nodes": [0, 1, 2, 3, 4, 5, 6, 7] }
+            ]
+          },
+          "physics": {
+            "kind": "modal_3d",
+            "material": {
+              "young_modulus": 70e9,
+              "poisson_ratio": 0.33
+            },
+            "density": 2700.0,
+            "requested_modes": 5,
+            "constraints": [
+              { "node": 0, "component": "x", "value": 0.0 }
+            ],
+            "lumped": true,
+            "solver_options": {
+              "max_iterations": 1000,
+              "tolerance": 1e-8,
+              "backend": "conjugate_gradient",
+              "preconditioner": "jacobi",
+              "record_residual_history": true
+            }
+          }
+        }
+      ]
+    }
+    "#;
+
+    let project = parse_project_str(json).unwrap();
+    assert_eq!(project.jobs.len(), 2);
+
+    // Verify 2D Elasticity Job
+    let (mesh_2d, problem_2d, options_2d) = kepler::job_to_elasticity(&project.jobs[0]).unwrap();
+    assert_eq!(mesh_2d.node_count(), 4);
+    assert_eq!(problem_2d.material.young_modulus, 200e9);
+    assert_eq!(problem_2d.material.poisson_ratio, 0.3);
+    assert_eq!(problem_2d.thickness, 0.1);
+    assert_eq!(problem_2d.constraints.len(), 2);
+    assert_eq!(problem_2d.forces.len(), 1);
+    assert_eq!(problem_2d.forces[0].fx, 1000.0);
+    assert_eq!(options_2d.backend, kepler::LinearSolverBackend::SparseLdl);
+
+    // Verify 3D Modal Job
+    let (mesh_3d, problem_3d, options_3d) = kepler::job_to_modal_3d(&project.jobs[1]).unwrap();
+    assert_eq!(mesh_3d.points().len(), 8);
+    assert_eq!(problem_3d.density, 2700.0);
+    assert_eq!(problem_3d.mode_count, 5);
+    assert_eq!(problem_3d.elasticity.material.young_modulus, 70e9);
+    assert_eq!(problem_3d.elasticity.material.poisson_ratio, 0.33);
+    assert_eq!(problem_3d.elasticity.constraints.len(), 1);
+    assert_eq!(options_3d.backend, kepler::LinearSolverBackend::ConjugateGradient);
+    assert_eq!(options_3d.preconditioner, kepler::PreconditionerKind::Jacobi);
 }
