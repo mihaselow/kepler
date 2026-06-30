@@ -22,6 +22,20 @@ cargo test --test benchmarks -- --ignored --nocapture
 cargo test --bin server -- --ignored --nocapture
 ```
 
+## Local Workflow Guidance
+
+Use focused commands while developing a narrow change, then finish with the required local gates. Good focused checks include `cargo test --test <name>` for an affected integration test, `cargo test --bin server` for REST workflow changes, and `cargo test --doc` when examples in public docs change.
+
+Run ignored benchmark-style checks when a change affects assembly loops, solver backend selection, import/export paths, project adaptation, or REST job orchestration. These checks are smoke benchmarks: they confirm the path still runs and prints timing data, but they are not pass/fail performance thresholds.
+
+Golden fixture updates should be deliberate. When a `.mesh`, `.params`, `.solution`, `.msh`, `.vtk`, project JSON, CLI output, or REST response fixture changes, update the corresponding test and explain whether the fixture reflects a behavior change, schema change, or formatting-only change.
+
+## CI Guidance
+
+A CI job should run the required local gates in the same order shown above. The benchmark-style checks can be scheduled separately or run manually before performance-sensitive changes merge, because their timing output is machine dependent and not yet compared against persisted baselines.
+
+The verification manifest is part of the quality gate. Any new integration test file, checked-in golden fixture, required command, or known verification gap should be added here in the same change that introduces it. `tests/verification_manifest.rs` guards that integration tests and required fixtures stay listed.
+
 ## Test Suite Inventory
 
 Core FEM and mesh tests:
@@ -98,6 +112,6 @@ These fixtures cover the legacy mesh/params path, the v1 project workflow path, 
 - Benchmarks are lightweight smoke tests only; they do not yet provide statistical sampling, persisted baselines, or CI regression thresholds.
 - CAD import workflow fixtures are not yet present beyond Gmsh mesh import.
 - REST project jobs and artifacts are in-memory only.
-- Verification currently relies on Rust test binaries rather than a CI configuration file.
+- CI guidance is documented here, but the repository does not yet include a concrete CI configuration file.
 
 Future verification sub-steps should reduce these gaps without weakening the required local gates above.

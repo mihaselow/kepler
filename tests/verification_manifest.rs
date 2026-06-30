@@ -87,6 +87,23 @@ fn verification_manifest_documents_known_gaps() {
 }
 
 #[test]
+fn verification_manifest_documents_quality_gate_guidance() {
+    for guidance in [
+        "Local Workflow Guidance",
+        "CI Guidance",
+        "Golden fixture updates should be deliberate",
+        "tests/verification_manifest.rs",
+        "cargo test --test benchmarks -- --ignored --nocapture",
+        "cargo test --bin server -- --ignored --nocapture",
+    ] {
+        assert!(
+            MANIFEST.contains(guidance),
+            "verification manifest should document quality-gate guidance `{guidance}`",
+        );
+    }
+}
+
+#[test]
 fn verification_manifest_lists_all_integration_test_files() {
     let mut missing = Vec::new();
     for entry in fs::read_dir("tests").unwrap() {
