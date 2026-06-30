@@ -181,6 +181,15 @@ The default parameters are average acceleration (`gamma = 0.5`, `beta = 0.25`). 
 
 Electrostatics is marked as `ElectrostaticFormulation::SteadyQuasiStatic`, so it intentionally has no physics-specific transient wrapper in this solver stack. A time-dependent electrostatic workflow should run repeated quasi-static solves for prescribed charge snapshots. Charge relaxation or electromagnetic propagation would require a different physics formulation rather than another use of the current first-order or Newmark integrators.
 
+Current physics-facing transient coverage:
+
+- Heat transfer: `solve_transient_heat` on 2D `Tri3` meshes with lumped heat capacity and theta integration.
+- Diffusion-reaction: `solve_transient_diffusion_reaction` on 2D `Tri3` meshes and `solve_transient_diffusion_reaction_3d` on 3D `Tet4` meshes with lumped storage and theta integration.
+- Structural dynamics: `solve_transient_elasticity` on 2D `Tri3` meshes and `solve_transient_elasticity_3d` on 3D `Tet4` meshes with lumped mass and Newmark integration.
+- Electrostatics: `ElectrostaticFormulation::SteadyQuasiStatic`, with transient charge histories represented as repeated steady solves until a charge-relaxation or electromagnetic formulation is introduced.
+
+The `tests/transient_coverage.rs` fixture exercises this full set in one place, while module-specific tests keep numerical references close to each physics implementation.
+
 ## Current Limits
 
 The direct backend is intentionally dense and intended for small systems, verification fixtures, and as a future hook point for external sparse direct solvers. Nonlinear solves are still generic linalg-level primitives. Transient physics coverage currently includes heat transfer, diffusion-reaction, and structural dynamics; electrostatics is deliberately steady/quasi-static unless a charge-relaxation or electromagnetic formulation is added.
