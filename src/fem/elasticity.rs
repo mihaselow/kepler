@@ -649,8 +649,13 @@ fn assemble_elasticity_3d_stiffness_matrix(
                     }
                 }
             }
-            ElementKind::Line2 | ElementKind::Tri3 | ElementKind::Quad4 => {}
-            ElementKind::Hex8 => {
+            ElementKind::Line2
+            | ElementKind::Line3
+            | ElementKind::Tri3
+            | ElementKind::Tri6
+            | ElementKind::Quad4
+            | ElementKind::Quad8 => {}
+            ElementKind::Hex8 | ElementKind::Hex20 | ElementKind::Tet10 => {
                 return Err(ElasticityError::UnsupportedElementKind {
                     cell_index,
                     kind: cell.kind,

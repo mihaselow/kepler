@@ -117,10 +117,15 @@ fn point_to_vtk_coords<const D: usize>(point: &PointD<D>) -> [f64; 3] {
 fn vtk_cell_type(kind: ElementKind) -> usize {
     match kind {
         ElementKind::Line2 => 3,
+        ElementKind::Line3 => 21,
         ElementKind::Tri3 => 5,
+        ElementKind::Tri6 => 22,
         ElementKind::Quad4 => 9,
+        ElementKind::Quad8 => 23,
         ElementKind::Tet4 => 10,
+        ElementKind::Tet10 => 24,
         ElementKind::Hex8 => 12,
+        ElementKind::Hex20 => 25,
     }
 }
 

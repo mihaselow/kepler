@@ -1,8 +1,8 @@
 use kepler::{
     ConfiguredLinearSolver, LinalgError, LinearSolver, LinearSolverBackend, LinearSolverOptions,
     NewmarkSolverOptions, NonlinearSolverOptions, NonlinearSystem, PreconditionerKind,
-    TransientSolverOptions, analyze_matrix, newton_solve, solve_linear_system,
-    solve_linear_transient, solve_newmark_transient,
+    TransientSolverOptions, analyze_matrix, newton_solve, solve_harmonic_response,
+    solve_linear_system, solve_linear_transient, solve_newmark_transient,
 };
 use sprs::TriMat;
 
@@ -320,4 +320,34 @@ fn assert_close(actual: f64, expected: f64) {
         (actual - expected).abs() <= 1.0e-10,
         "expected {actual} to be close to {expected}",
     );
+}
+
+#[test]
+fn test_solve_harmonic_response_1dof() {
+    let mass = csr_matrix(1, &[(0, 0, 2.0)]);
+    let damping = csr_matrix(1, &[(0, 0, 0.5)]);
+    let stiffness = csr_matrix(1, &[(0, 0, 8.0)]);
+
+    let f_real = [4.0];
+    let f_imag = [3.0];
+    let omega = 1.5;
+
+    let solver_options = LinearSolverOptions {
+        backend: LinearSolverBackend::DenseDirect,
+        ..LinearSolverOptions::default()
+    };
+
+    let (u_real, u_imag) = solve_harmonic_response(
+        &mass,
+        Some(&damping),
+        &stiffness,
+        &f_real,
+        &f_imag,
+        omega,
+        solver_options,
+    )
+    .unwrap();
+
+    assert_close(u_real[0], 16.25 / 12.8125);
+    assert_close(u_imag[0], 7.5 / 12.8125);
 }

@@ -322,6 +322,81 @@ pub fn solve_linear_system(
     }
 }
 
+pub fn solve_harmonic_response(
+    mass: &CsMat<f64>,
+    damping: Option<&CsMat<f64>>,
+    stiffness: &CsMat<f64>,
+    force_amplitude_real: &[f64],
+    force_amplitude_imag: &[f64],
+    omega: f64,
+    solver_options: LinearSolverOptions,
+) -> Result<(Vec<f64>, Vec<f64>), LinalgError> {
+    let n = stiffness.rows();
+    if stiffness.cols() != n {
+        return Err(LinalgError::NonSquareMatrix {
+            rows: n,
+            cols: stiffness.cols(),
+        });
+    }
+    if mass.rows() != n || mass.cols() != n {
+        return Err(LinalgError::DimensionMismatch {
+            matrix_dim: n,
+            rhs_len: mass.rows(),
+        });
+    }
+    if force_amplitude_real.len() != n || force_amplitude_imag.len() != n {
+        return Err(LinalgError::DimensionMismatch {
+            matrix_dim: n,
+            rhs_len: force_amplitude_real.len(),
+        });
+    }
+
+    let mut triplets = TriMat::new((2 * n, 2 * n));
+    let omega_sq = omega * omega;
+
+    for (r, row) in stiffness.outer_iterator().enumerate() {
+        for (c, &val) in row.iter() {
+            triplets.add_triplet(r, c, val);
+            triplets.add_triplet(r + n, c + n, val);
+        }
+    }
+
+    for (r, row) in mass.outer_iterator().enumerate() {
+        for (c, &val) in row.iter() {
+            triplets.add_triplet(r, c, -omega_sq * val);
+            triplets.add_triplet(r + n, c + n, -omega_sq * val);
+        }
+    }
+
+    if let Some(c_mat) = damping {
+        if c_mat.rows() != n || c_mat.cols() != n {
+            return Err(LinalgError::DimensionMismatch {
+                matrix_dim: n,
+                rhs_len: c_mat.rows(),
+            });
+        }
+        for (r, row) in c_mat.outer_iterator().enumerate() {
+            for (c, &val) in row.iter() {
+                triplets.add_triplet(r, c + n, -omega * val);
+                triplets.add_triplet(r + n, c, omega * val);
+            }
+        }
+    }
+
+    let a_matrix: CsMat<f64> = triplets.to_csr();
+
+    let mut b = vec![0.0; 2 * n];
+    b[0..n].copy_from_slice(force_amplitude_real);
+    b[n..2 * n].copy_from_slice(force_amplitude_imag);
+
+    let result = solve_linear_system(&a_matrix, &b, solver_options)?;
+
+    let x_real = result.values[0..n].to_vec();
+    let x_imag = result.values[n..2 * n].to_vec();
+
+    Ok((x_real, x_imag))
+}
+
 pub fn analyze_matrix(matrix: &CsMat<f64>, symmetry_tolerance: f64) -> MatrixDiagnostics {
     let sparsity = sparsity_stats(matrix);
     let symmetry = symmetry_diagnostics(matrix, symmetry_tolerance);

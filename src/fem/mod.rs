@@ -7,5 +7,6 @@ pub mod element;
 pub mod heat;
 pub mod modal;
 pub mod poisson;
+pub mod quadratic;
 pub mod quadrature;
 pub mod structural;

@@ -83,7 +83,7 @@ pub use linalg::{
     NonlinearSolverDiagnostics, NonlinearSolverOptions, NonlinearSolverResult, NonlinearSystem,
     PreconditionerKind, SolverDiagnostics, SolverOptions, SparsityStats, SpdHeuristics,
     SymmetryDiagnostics, TransientSolverOptions, TransientStepResult, analyze_matrix, newton_solve,
-    solve_linear_system, solve_linear_transient, solve_newmark_transient,
+    solve_harmonic_response, solve_linear_system, solve_linear_transient, solve_newmark_transient,
 };
 pub use mesh::{
     Cell, CellId, ElementKind, EntityDimension, FacetId, FieldId, MaterialId, Mesh, MeshError,

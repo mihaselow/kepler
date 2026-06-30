@@ -386,10 +386,15 @@ fn entity_dimension_from_gmsh(
 fn element_kind_from_gmsh(element_type: usize) -> Option<ElementKind> {
     match element_type {
         1 => Some(ElementKind::Line2),
+        8 => Some(ElementKind::Line3),
         2 => Some(ElementKind::Tri3),
+        9 => Some(ElementKind::Tri6),
         3 => Some(ElementKind::Quad4),
+        16 => Some(ElementKind::Quad8),
         4 => Some(ElementKind::Tet4),
+        11 => Some(ElementKind::Tet10),
         5 => Some(ElementKind::Hex8),
+        17 => Some(ElementKind::Hex20),
         _ => None,
     }
 }

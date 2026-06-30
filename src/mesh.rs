@@ -74,28 +74,38 @@ impl EntityDimension {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElementKind {
     Line2,
+    Line3,
     Tri3,
+    Tri6,
     Quad4,
+    Quad8,
     Tet4,
+    Tet10,
     Hex8,
+    Hex20,
 }
 
 impl ElementKind {
     pub const fn node_count(self) -> usize {
         match self {
             Self::Line2 => 2,
+            Self::Line3 => 3,
             Self::Tri3 => 3,
+            Self::Tri6 => 6,
             Self::Quad4 => 4,
+            Self::Quad8 => 8,
             Self::Tet4 => 4,
+            Self::Tet10 => 10,
             Self::Hex8 => 8,
+            Self::Hex20 => 20,
         }
     }
 
     pub const fn entity_dimension(self) -> EntityDimension {
         match self {
-            Self::Line2 => EntityDimension::Curve,
-            Self::Tri3 | Self::Quad4 => EntityDimension::Surface,
-            Self::Tet4 | Self::Hex8 => EntityDimension::Volume,
+            Self::Line2 | Self::Line3 => EntityDimension::Curve,
+            Self::Tri3 | Self::Tri6 | Self::Quad4 | Self::Quad8 => EntityDimension::Surface,
+            Self::Tet4 | Self::Tet10 | Self::Hex8 | Self::Hex20 => EntityDimension::Volume,
         }
     }
 }
@@ -440,7 +450,7 @@ fn validate_cell_geometry<const D: usize>(
     points: &[PointD<D>],
 ) -> Result<(), MeshError> {
     match cell.kind {
-        ElementKind::Line2 => {
+        ElementKind::Line2 | ElementKind::Line3 => {
             let a = points[cell.nodes[0]].coords;
             let b = points[cell.nodes[1]].coords;
             let length_squared: f64 = a
@@ -452,7 +462,7 @@ fn validate_cell_geometry<const D: usize>(
                 return Err(MeshError::DegenerateCell { cell_index });
             }
         }
-        ElementKind::Tri3 if D >= 2 => {
+        ElementKind::Tri3 | ElementKind::Tri6 if D >= 2 => {
             let a = points[cell.nodes[0]].coords;
             let b = points[cell.nodes[1]].coords;
             let c = points[cell.nodes[2]].coords;
@@ -461,7 +471,7 @@ fn validate_cell_geometry<const D: usize>(
                 return Err(MeshError::DegenerateCell { cell_index });
             }
         }
-        ElementKind::Tet4 if D == 3 => {
+        ElementKind::Tet4 | ElementKind::Tet10 if D == 3 => {
             let a = points[cell.nodes[0]].coords;
             let b = points[cell.nodes[1]].coords;
             let c = points[cell.nodes[2]].coords;
