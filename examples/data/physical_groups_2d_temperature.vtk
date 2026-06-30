@@ -1,0 +1,20 @@
+# vtk DataFile Version 3.0
+kepler mesh
+ASCII
+DATASET UNSTRUCTURED_GRID
+POINTS 3 double
+0 0 0
+1 0 0
+0 1 0
+CELLS 2 7
+2 0 2
+3 0 1 2
+CELL_TYPES 2
+3
+5
+POINT_DATA 3
+SCALARS temperature_field double 1
+LOOKUP_TABLE default
+0
+0.5
+1

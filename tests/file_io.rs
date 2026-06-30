@@ -6,6 +6,7 @@ use kepler::{
 const EPS: f64 = 1.0e-12;
 const SQUARE_MESH: &str = include_str!("../examples/data/square.mesh");
 const SQUARE_PARAMS: &str = include_str!("../examples/data/square.params");
+const TWO_NODE_SOLUTION: &str = include_str!("../examples/data/two_node.solution");
 
 #[test]
 fn parses_square_mesh_file_format() {
@@ -158,6 +159,7 @@ fn solution_format_includes_diagnostics_and_ordered_values() {
         residual_norm: 1.0e-9,
     });
 
+    assert_eq!(output, TWO_NODE_SOLUTION);
     assert!(output.contains("# iterations 3"));
     assert!(output.contains("# residual_norm 0.000000001"));
     assert!(output.contains("node value\n0 0\n1 0.5\n"));

@@ -58,8 +58,11 @@ Current checked-in fixtures:
 - `examples/data/square.mesh`
 - `examples/data/square.params`
 - `examples/data/square.project.json`
+- `examples/data/physical_groups_2d.msh`
+- `examples/data/physical_groups_2d_temperature.vtk`
+- `examples/data/two_node.solution`
 
-These fixtures cover the legacy mesh/params path and the v1 project workflow path.
+These fixtures cover the legacy mesh/params path, the v1 project workflow path, Gmsh import, VTK export, and compact solution output.
 
 ## Current Coverage Map
 
@@ -71,14 +74,14 @@ These fixtures cover the legacy mesh/params path and the v1 project workflow pat
 - Elasticity: 2D/3D stiffness symmetry, rigid translations, constrained solves, affine displacement constraints, transient Newmark dynamics.
 - Modal analysis: 2D/3D sorted modes, density validation, constrained model validation, one-DOF frequency references.
 - Solver stack: CG, GMRES, dense direct, Jacobi preconditioning, diagnostics, Newton, theta transient, Newmark transient.
-- Import/export: legacy mesh/params/solution, Gmsh physical groups, VTK scalar output.
+- Import/export: legacy mesh/params/solution, golden solution output, Gmsh physical groups, VTK scalar output.
 - Project workflows: v1 project parsing/validation, CLI validation/inspection, REST validation/solve, async jobs, artifact upload/download.
 
 ## Known Gaps
 
 - Manufactured-solution suites are not yet complete for non-affine structural stress recovery or modal benchmark problems.
 - Benchmarks are not yet implemented.
-- CAD import workflow fixtures are not yet present.
+- CAD import workflow fixtures are not yet present beyond Gmsh mesh import.
 - REST project jobs and artifacts are in-memory only.
 - Verification currently relies on Rust test binaries rather than a CI configuration file.
 

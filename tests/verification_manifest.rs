@@ -38,6 +38,9 @@ const REQUIRED_FIXTURES: &[&str] = &[
     "examples/data/square.mesh",
     "examples/data/square.params",
     "examples/data/square.project.json",
+    "examples/data/physical_groups_2d.msh",
+    "examples/data/physical_groups_2d_temperature.vtk",
+    "examples/data/two_node.solution",
 ];
 
 #[test]

@@ -2,6 +2,10 @@ use kepler::{
     ElementKind, FileIoError, ImportedMesh, VtkScalarField, format_vtk_legacy, parse_gmsh_str,
 };
 
+const GMSH_2D: &str = include_str!("../examples/data/physical_groups_2d.msh");
+const VTK_2D_TEMPERATURE: &str =
+    include_str!("../examples/data/physical_groups_2d_temperature.vtk");
+
 #[test]
 fn gmsh_import_preserves_physical_groups_as_regions() {
     let imported = parse_gmsh_str(GMSH_2D).unwrap();
@@ -63,6 +67,7 @@ fn vtk_export_writes_unstructured_grid_and_scalar_data() {
     )
     .unwrap();
 
+    assert_eq!(output, VTK_2D_TEMPERATURE);
     assert!(output.contains("DATASET UNSTRUCTURED_GRID"));
     assert!(output.contains("POINTS 3 double"));
     assert!(output.contains("CELL_TYPES 2"));
@@ -87,27 +92,6 @@ fn vtk_export_rejects_scalar_fields_with_wrong_length() {
         } if name == "u"
     ));
 }
-
-const GMSH_2D: &str = r#"$MeshFormat
-2.2 0 8
-$EndMeshFormat
-$PhysicalNames
-2
-1 7 "left"
-2 8 "body"
-$EndPhysicalNames
-$Nodes
-3
-10 0.0 0.0 0.0
-20 1.0 0.0 0.0
-30 0.0 1.0 0.0
-$EndNodes
-$Elements
-2
-1 1 2 7 0 10 30
-2 2 2 8 0 10 20 30
-$EndElements
-"#;
 
 const GMSH_3D: &str = r#"$MeshFormat
 2.2 0 8
