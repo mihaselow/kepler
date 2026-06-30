@@ -119,6 +119,8 @@ pub struct TransientElasticityProblem<F> {
     pub forces: F,
     pub initial_displacements: Vec<[f64; 2]>,
     pub initial_velocities: Vec<[f64; 2]>,
+    pub rayleigh_alpha: Option<f64>,
+    pub rayleigh_beta: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -129,6 +131,8 @@ pub struct TransientElasticityProblem3D<F> {
     pub forces: F,
     pub initial_displacements: Vec<[f64; 3]>,
     pub initial_velocities: Vec<[f64; 3]>,
+    pub rayleigh_alpha: Option<f64>,
+    pub rayleigh_beta: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -348,9 +352,28 @@ where
     )?;
     let time_step = options.time_step;
 
+    let reduced_damping = if problem.rayleigh_alpha.is_some() || problem.rayleigh_beta.is_some() {
+        let alpha = problem.rayleigh_alpha.unwrap_or(0.0);
+        let beta = problem.rayleigh_beta.unwrap_or(0.0);
+        let mut triplets = TriMat::new((reduced_mass.rows(), reduced_mass.cols()));
+        for (row_index, row) in reduced_mass.outer_iterator().enumerate() {
+            for (col_index, &value) in row.iter() {
+                triplets.add_triplet(row_index, col_index, alpha * value);
+            }
+        }
+        for (row_index, row) in reduced_stiffness.outer_iterator().enumerate() {
+            for (col_index, &value) in row.iter() {
+                triplets.add_triplet(row_index, col_index, beta * value);
+            }
+        }
+        Some(triplets.to_csr())
+    } else {
+        None
+    };
+
     let reduced_steps = solve_newmark_transient(
         &reduced_mass,
-        None,
+        reduced_damping.as_ref(),
         &reduced_stiffness,
         initial_displacements,
         initial_velocities,
@@ -433,9 +456,28 @@ where
     )?;
     let time_step = options.time_step;
 
+    let reduced_damping = if problem.rayleigh_alpha.is_some() || problem.rayleigh_beta.is_some() {
+        let alpha = problem.rayleigh_alpha.unwrap_or(0.0);
+        let beta = problem.rayleigh_beta.unwrap_or(0.0);
+        let mut triplets = TriMat::new((reduced_mass.rows(), reduced_mass.cols()));
+        for (row_index, row) in reduced_mass.outer_iterator().enumerate() {
+            for (col_index, &value) in row.iter() {
+                triplets.add_triplet(row_index, col_index, alpha * value);
+            }
+        }
+        for (row_index, row) in reduced_stiffness.outer_iterator().enumerate() {
+            for (col_index, &value) in row.iter() {
+                triplets.add_triplet(row_index, col_index, beta * value);
+            }
+        }
+        Some(triplets.to_csr())
+    } else {
+        None
+    };
+
     let reduced_steps = solve_newmark_transient(
         &reduced_mass,
-        None,
+        reduced_damping.as_ref(),
         &reduced_stiffness,
         initial_displacements,
         initial_velocities,

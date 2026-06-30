@@ -7,3 +7,4 @@ pub mod heat;
 pub mod modal;
 pub mod poisson;
 pub mod quadrature;
+pub mod structural;

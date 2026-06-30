@@ -144,6 +144,8 @@ fn transient_elasticity_3d_solves_constrained_tetrahedron_dynamics() {
         },
         initial_displacements: vec![[0.0, 0.0, 0.0]; 4],
         initial_velocities: vec![[0.0, 0.0, 0.0]; 4],
+        rayleigh_alpha: None,
+        rayleigh_beta: None,
     };
 
     let result = solve_transient_elasticity_3d(

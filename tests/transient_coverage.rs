@@ -96,6 +96,8 @@ fn solver_stack_exercises_complete_transient_physics_coverage() {
             },
             initial_displacements: vec![[0.0, 0.0]; 3],
             initial_velocities: vec![[0.0, 0.0]; 3],
+            rayleigh_alpha: None,
+            rayleigh_beta: None,
         },
         newmark_options.clone(),
     )
@@ -121,6 +123,8 @@ fn solver_stack_exercises_complete_transient_physics_coverage() {
             },
             initial_displacements: vec![[0.0, 0.0, 0.0]; 4],
             initial_velocities: vec![[0.0, 0.0, 0.0]; 4],
+            rayleigh_alpha: None,
+            rayleigh_beta: None,
         },
         newmark_options,
     )

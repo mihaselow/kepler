@@ -187,6 +187,8 @@ fn transient_elasticity_solves_constrained_triangle_dynamics() {
         },
         initial_displacements: vec![[0.0, 0.0]; 3],
         initial_velocities: vec![[0.0, 0.0]; 3],
+        rayleigh_alpha: None,
+        rayleigh_beta: None,
     };
 
     let result = solve_transient_elasticity(
@@ -227,6 +229,8 @@ fn transient_elasticity_rejects_invalid_density() {
         forces: |_| vec![],
         initial_displacements: vec![[0.0, 0.0]; 3],
         initial_velocities: vec![[0.0, 0.0]; 3],
+        rayleigh_alpha: None,
+        rayleigh_beta: None,
     };
 
     let error =
@@ -271,4 +275,74 @@ fn assert_close(actual: f64, expected: f64) {
         (actual - expected).abs() <= EPS,
         "expected {actual} to be within {EPS} of {expected}",
     );
+}
+
+#[test]
+fn test_rayleigh_damping_decays_vibration() {
+    let mesh = unit_triangle();
+    let mut initial_displacements = vec![[0.0, 0.0]; 3];
+    initial_displacements[1] = [1.0, 0.0];
+
+    let problem_undamped = TransientElasticityProblem {
+        material: material(),
+        thickness: 1.0,
+        density: 1.0,
+        constraints: vec![
+            DisplacementConstraint {
+                node: 0,
+                component: DisplacementComponent::X,
+                value: 0.0,
+            },
+            DisplacementConstraint {
+                node: 0,
+                component: DisplacementComponent::Y,
+                value: 0.0,
+            },
+        ],
+        forces: |_| vec![],
+        initial_displacements: initial_displacements.clone(),
+        initial_velocities: vec![[0.0, 0.0]; 3],
+        rayleigh_alpha: None,
+        rayleigh_beta: None,
+    };
+
+    let problem_damped = TransientElasticityProblem {
+        material: material(),
+        thickness: 1.0,
+        density: 1.0,
+        constraints: vec![
+            DisplacementConstraint {
+                node: 0,
+                component: DisplacementComponent::X,
+                value: 0.0,
+            },
+            DisplacementConstraint {
+                node: 0,
+                component: DisplacementComponent::Y,
+                value: 0.0,
+            },
+        ],
+        forces: |_| vec![],
+        initial_displacements: initial_displacements.clone(),
+        initial_velocities: vec![[0.0, 0.0]; 3],
+        rayleigh_alpha: Some(2.0),
+        rayleigh_beta: Some(0.05),
+    };
+
+    let options = NewmarkSolverOptions {
+        time_step: 0.1,
+        steps: 10,
+        beta: 0.25,
+        gamma: 0.5,
+        linear_solver: LinearSolverOptions::default(),
+    };
+
+    let res_undamped =
+        solve_transient_elasticity(&mesh, &problem_undamped, options.clone()).unwrap();
+    let res_damped = solve_transient_elasticity(&mesh, &problem_damped, options).unwrap();
+
+    let x_undamped_last = res_undamped.steps.last().unwrap().displacements[1][0];
+    let x_damped_last = res_damped.steps.last().unwrap().displacements[1][0];
+
+    assert!(x_damped_last.abs() < x_undamped_last.abs());
 }
