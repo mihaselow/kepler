@@ -4,6 +4,10 @@ use sprs::{CsMat, TriMat};
 use thiserror::Error;
 
 use crate::{
+    fem::{
+        dof::DOFManager,
+        element::{Element, ElementError},
+    },
     linalg::{
         LinalgError, LinearSolverOptions, SolverDiagnostics, SolverOptions, solve_linear_system,
     },
@@ -134,6 +138,11 @@ where
     validate_conductivity(problem.conductivity)?;
     let dirichlet = validate_dirichlet(mesh.node_count(), &problem.dirichlet)?;
 
+    let mut dof_manager = DOFManager::new();
+    for node_id in 0..mesh.node_count() {
+        dof_manager.register_dof(node_id, "u");
+    }
+
     let mut triplets = TriMat::with_capacity(
         (mesh.node_count(), mesh.node_count()),
         mesh.triangles().len() * 9 + dirichlet.len(),
@@ -145,9 +154,11 @@ where
         let load = local_load(mesh, triangle, &problem.source)?;
 
         for (local_row, global_row) in triangle.nodes.iter().copied().enumerate() {
-            rhs[global_row] += load[local_row];
+            let eq_row = dof_manager.get_eq_index(global_row, "u").unwrap();
+            rhs[eq_row] += load[local_row];
             for (local_col, global_col) in triangle.nodes.iter().copied().enumerate() {
-                triplets.add_triplet(global_row, global_col, stiffness[local_row][local_col]);
+                let eq_col = dof_manager.get_eq_index(global_col, "u").unwrap();
+                triplets.add_triplet(eq_row, eq_col, stiffness[local_row][local_col]);
             }
         }
     }
@@ -165,6 +176,12 @@ where
 {
     validate_conductivity(problem.conductivity)?;
     let dirichlet = validate_dirichlet(mesh.points().len(), &problem.dirichlet)?;
+
+    let mut dof_manager = DOFManager::new();
+    for node_id in 0..mesh.points().len() {
+        dof_manager.register_dof(node_id, "u");
+    }
+
     let tet_count = mesh
         .cells()
         .iter()
@@ -182,13 +199,11 @@ where
                 let load = local_tet4_load(mesh, nodes, &problem.source)?;
 
                 for (local_row, global_row) in nodes.iter().copied().enumerate() {
-                    rhs[global_row] += load[local_row];
+                    let eq_row = dof_manager.get_eq_index(global_row, "u").unwrap();
+                    rhs[eq_row] += load[local_row];
                     for (local_col, global_col) in nodes.iter().copied().enumerate() {
-                        triplets.add_triplet(
-                            global_row,
-                            global_col,
-                            stiffness[local_row][local_col],
-                        );
+                        let eq_col = dof_manager.get_eq_index(global_col, "u").unwrap();
+                        triplets.add_triplet(eq_row, eq_col, stiffness[local_row][local_col]);
                     }
                 }
             }
@@ -212,17 +227,35 @@ pub fn local_stiffness(
     conductivity: f64,
 ) -> Result<[[f64; 3]; 3], PoissonError> {
     validate_conductivity(conductivity)?;
-    let (area, gradients, _) = triangle_geometry(mesh, triangle);
-    let mut stiffness = [[0.0; 3]; 3];
 
-    for row in 0..3 {
-        for col in 0..3 {
-            stiffness[row][col] = conductivity
-                * area
-                * (gradients[row][0] * gradients[col][0] + gradients[row][1] * gradients[col][1]);
+    let el = PoissonTri3 {
+        nodes: &triangle.nodes,
+    };
+    let node_coords: Vec<Point3> = triangle
+        .nodes
+        .iter()
+        .map(|&node_id| {
+            let p2 = mesh.points()[node_id];
+            Point3::new([p2.x, p2.y, 0.0])
+        })
+        .collect();
+
+    let mut properties = BTreeMap::new();
+    properties.insert("conductivity".to_string(), conductivity);
+
+    let stiffness_vec = el.local_stiffness(&node_coords, &properties).map_err(|_| {
+        PoissonError::UnsupportedElementKind {
+            cell_index: 0,
+            kind: ElementKind::Tri3,
+        }
+    })?;
+
+    let mut stiffness = [[0.0; 3]; 3];
+    for r in 0..3 {
+        for c in 0..3 {
+            stiffness[r][c] = stiffness_vec[r][c];
         }
     }
-
     Ok(stiffness)
 }
 
@@ -248,20 +281,276 @@ pub fn local_tet4_stiffness(
     conductivity: f64,
 ) -> Result<[[f64; 4]; 4], PoissonError> {
     validate_conductivity(conductivity)?;
-    let (volume, gradients, _) = tetrahedron_geometry(mesh, nodes);
-    let mut stiffness = [[0.0; 4]; 4];
 
-    for row in 0..4 {
-        for col in 0..4 {
-            stiffness[row][col] = conductivity
-                * volume
-                * (gradients[row][0] * gradients[col][0]
-                    + gradients[row][1] * gradients[col][1]
-                    + gradients[row][2] * gradients[col][2]);
+    let el = PoissonTet4 { nodes: &nodes };
+    let node_coords: Vec<Point3> = nodes
+        .iter()
+        .map(|&node_id| mesh.points()[node_id])
+        .collect();
+
+    let mut properties = BTreeMap::new();
+    properties.insert("conductivity".to_string(), conductivity);
+
+    let stiffness_vec = el.local_stiffness(&node_coords, &properties).map_err(|_| {
+        PoissonError::UnsupportedElementKind {
+            cell_index: 0,
+            kind: ElementKind::Tet4,
+        }
+    })?;
+
+    let mut stiffness = [[0.0; 4]; 4];
+    for r in 0..4 {
+        for c in 0..4 {
+            stiffness[r][c] = stiffness_vec[r][c];
         }
     }
-
     Ok(stiffness)
+}
+
+pub struct PoissonTri3<'a> {
+    pub nodes: &'a [NodeId; 3],
+}
+
+impl<'a> Element for PoissonTri3<'a> {
+    fn spatial_dimension(&self) -> usize {
+        2
+    }
+    fn node_count(&self) -> usize {
+        3
+    }
+    fn nodes(&self) -> &[NodeId] {
+        self.nodes
+    }
+    fn active_fields(&self) -> Vec<String> {
+        vec!["u".to_string()]
+    }
+
+    fn local_stiffness(
+        &self,
+        node_coords: &[Point3],
+        properties: &BTreeMap<String, f64>,
+    ) -> Result<Vec<Vec<f64>>, ElementError> {
+        let conductivity = *properties
+            .get("conductivity")
+            .ok_or_else(|| ElementError::MissingProperty("conductivity".to_string()))?;
+        if node_coords.len() != 3 {
+            return Err(ElementError::InvalidNodeCount {
+                expected: 3,
+                actual: node_coords.len(),
+            });
+        }
+
+        let a = node_coords[0].coords;
+        let b = node_coords[1].coords;
+        let c = node_coords[2].coords;
+        let twice_area = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]);
+        let area = 0.5 * twice_area.abs();
+        if area <= f64::EPSILON {
+            return Err(ElementError::DegenerateGeometry);
+        }
+
+        let gradients = [
+            [(b[1] - c[1]) / twice_area, (c[0] - b[0]) / twice_area],
+            [(c[1] - a[1]) / twice_area, (a[0] - c[0]) / twice_area],
+            [(a[1] - b[1]) / twice_area, (b[0] - a[0]) / twice_area],
+        ];
+
+        let mut stiffness = vec![vec![0.0; 3]; 3];
+        for row in 0..3 {
+            for col in 0..3 {
+                stiffness[row][col] = conductivity
+                    * area
+                    * (gradients[row][0] * gradients[col][0]
+                        + gradients[row][1] * gradients[col][1]);
+            }
+        }
+        Ok(stiffness)
+    }
+
+    #[allow(clippy::needless_range_loop)]
+    fn local_mass(
+        &self,
+        node_coords: &[Point3],
+        density: f64,
+        lumped: bool,
+    ) -> Result<Vec<Vec<f64>>, ElementError> {
+        if node_coords.len() != 3 {
+            return Err(ElementError::InvalidNodeCount {
+                expected: 3,
+                actual: node_coords.len(),
+            });
+        }
+        let a = node_coords[0].coords;
+        let b = node_coords[1].coords;
+        let c = node_coords[2].coords;
+        let twice_area = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]);
+        let area = 0.5 * twice_area.abs();
+        if area <= f64::EPSILON {
+            return Err(ElementError::DegenerateGeometry);
+        }
+        let total_mass = density * area;
+        let mut mass = vec![vec![0.0; 3]; 3];
+        if lumped {
+            for i in 0..3 {
+                mass[i][i] = total_mass / 3.0;
+            }
+        } else {
+            let val_diag = total_mass / 6.0;
+            let val_off = total_mass / 12.0;
+            for i in 0..3 {
+                for j in 0..3 {
+                    mass[i][j] = if i == j { val_diag } else { val_off };
+                }
+            }
+        }
+        Ok(mass)
+    }
+}
+
+pub struct PoissonTet4<'a> {
+    pub nodes: &'a [NodeId; 4],
+}
+
+impl<'a> Element for PoissonTet4<'a> {
+    fn spatial_dimension(&self) -> usize {
+        3
+    }
+    fn node_count(&self) -> usize {
+        4
+    }
+    fn nodes(&self) -> &[NodeId] {
+        self.nodes
+    }
+    fn active_fields(&self) -> Vec<String> {
+        vec!["u".to_string()]
+    }
+
+    fn local_stiffness(
+        &self,
+        node_coords: &[Point3],
+        properties: &BTreeMap<String, f64>,
+    ) -> Result<Vec<Vec<f64>>, ElementError> {
+        let conductivity = *properties
+            .get("conductivity")
+            .ok_or_else(|| ElementError::MissingProperty("conductivity".to_string()))?;
+        if node_coords.len() != 4 {
+            return Err(ElementError::InvalidNodeCount {
+                expected: 4,
+                actual: node_coords.len(),
+            });
+        }
+
+        let [a, b, c, d] = [
+            node_coords[0],
+            node_coords[1],
+            node_coords[2],
+            node_coords[3],
+        ];
+        let jacobian = [
+            [
+                b.coords[0] - a.coords[0],
+                c.coords[0] - a.coords[0],
+                d.coords[0] - a.coords[0],
+            ],
+            [
+                b.coords[1] - a.coords[1],
+                c.coords[1] - a.coords[1],
+                d.coords[1] - a.coords[1],
+            ],
+            [
+                b.coords[2] - a.coords[2],
+                c.coords[2] - a.coords[2],
+                d.coords[2] - a.coords[2],
+            ],
+        ];
+        let determinant = determinant_3(jacobian);
+        let volume = determinant.abs() / 6.0;
+        if volume <= f64::EPSILON {
+            return Err(ElementError::DegenerateGeometry);
+        }
+        let inverse = inverse_3(jacobian, determinant);
+        let gradients = [
+            [
+                -(inverse[0][0] + inverse[1][0] + inverse[2][0]),
+                -(inverse[0][1] + inverse[1][1] + inverse[2][1]),
+                -(inverse[0][2] + inverse[1][2] + inverse[2][2]),
+            ],
+            inverse[0],
+            inverse[1],
+            inverse[2],
+        ];
+
+        let mut stiffness = vec![vec![0.0; 4]; 4];
+        for row in 0..4 {
+            for col in 0..4 {
+                stiffness[row][col] = conductivity
+                    * volume
+                    * (gradients[row][0] * gradients[col][0]
+                        + gradients[row][1] * gradients[col][1]
+                        + gradients[row][2] * gradients[col][2]);
+            }
+        }
+        Ok(stiffness)
+    }
+
+    #[allow(clippy::needless_range_loop)]
+    fn local_mass(
+        &self,
+        node_coords: &[Point3],
+        density: f64,
+        lumped: bool,
+    ) -> Result<Vec<Vec<f64>>, ElementError> {
+        if node_coords.len() != 4 {
+            return Err(ElementError::InvalidNodeCount {
+                expected: 4,
+                actual: node_coords.len(),
+            });
+        }
+        let [a, b, c, d] = [
+            node_coords[0],
+            node_coords[1],
+            node_coords[2],
+            node_coords[3],
+        ];
+        let jacobian = [
+            [
+                b.coords[0] - a.coords[0],
+                c.coords[0] - a.coords[0],
+                d.coords[0] - a.coords[0],
+            ],
+            [
+                b.coords[1] - a.coords[1],
+                c.coords[1] - a.coords[1],
+                d.coords[1] - a.coords[1],
+            ],
+            [
+                b.coords[2] - a.coords[2],
+                c.coords[2] - a.coords[2],
+                d.coords[2] - a.coords[2],
+            ],
+        ];
+        let determinant = determinant_3(jacobian);
+        let volume = determinant.abs() / 6.0;
+        if volume <= f64::EPSILON {
+            return Err(ElementError::DegenerateGeometry);
+        }
+        let total_mass = density * volume;
+        let mut mass = vec![vec![0.0; 4]; 4];
+        if lumped {
+            for i in 0..4 {
+                mass[i][i] = total_mass / 4.0;
+            }
+        } else {
+            let val_diag = total_mass / 10.0;
+            let val_off = total_mass / 20.0;
+            for i in 0..4 {
+                for j in 0..4 {
+                    mass[i][j] = if i == j { val_diag } else { val_off };
+                }
+            }
+        }
+        Ok(mass)
+    }
 }
 
 pub fn local_tet4_load<F>(

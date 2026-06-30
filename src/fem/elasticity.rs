@@ -4,6 +4,10 @@ use sprs::{CsMat, TriMat};
 use thiserror::Error;
 
 use crate::{
+    fem::{
+        dof::DOFManager,
+        element::{Element, ElementError},
+    },
     linalg::{
         LinalgError, LinearSolverOptions, NewmarkSolverOptions, SolverDiagnostics, SolverOptions,
         solve_linear_system, solve_newmark_transient,
@@ -526,12 +530,25 @@ fn assemble_elasticity_stiffness_matrix(
     material: ElasticityMaterial,
     thickness: f64,
 ) -> Result<CsMat<f64>, ElasticityError> {
+    let mut dof_manager = DOFManager::new();
+    for node_id in 0..mesh.node_count() {
+        dof_manager.register_dof(node_id, "ux");
+        dof_manager.register_dof(node_id, "uy");
+    }
+
     let dof_count = mesh.node_count() * 2;
     let mut triplets = TriMat::with_capacity((dof_count, dof_count), mesh.triangles().len() * 36);
 
     for triangle in mesh.triangles() {
         let stiffness = local_elasticity_stiffness(mesh, triangle, material, thickness)?;
-        let dofs = triangle_dofs(triangle);
+        let dofs = [
+            dof_manager.get_eq_index(triangle.nodes[0], "ux").unwrap(),
+            dof_manager.get_eq_index(triangle.nodes[0], "uy").unwrap(),
+            dof_manager.get_eq_index(triangle.nodes[1], "ux").unwrap(),
+            dof_manager.get_eq_index(triangle.nodes[1], "uy").unwrap(),
+            dof_manager.get_eq_index(triangle.nodes[2], "ux").unwrap(),
+            dof_manager.get_eq_index(triangle.nodes[2], "uy").unwrap(),
+        ];
         for (local_row, global_row) in dofs.iter().copied().enumerate() {
             for (local_col, global_col) in dofs.iter().copied().enumerate() {
                 triplets.add_triplet(global_row, global_col, stiffness[local_row][local_col]);
@@ -546,6 +563,13 @@ fn assemble_elasticity_3d_stiffness_matrix(
     mesh: &MeshTopology<3>,
     material: ElasticityMaterial3D,
 ) -> Result<CsMat<f64>, ElasticityError> {
+    let mut dof_manager = DOFManager::new();
+    for node_id in 0..mesh.points().len() {
+        dof_manager.register_dof(node_id, "ux");
+        dof_manager.register_dof(node_id, "uy");
+        dof_manager.register_dof(node_id, "uz");
+    }
+
     let dof_count = mesh.points().len() * 3;
     let tet_count = mesh
         .cells()
@@ -559,7 +583,20 @@ fn assemble_elasticity_3d_stiffness_matrix(
             ElementKind::Tet4 => {
                 let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2], cell.nodes[3]];
                 let stiffness = local_tet4_elasticity_stiffness(mesh, nodes, material)?;
-                let dofs = tet4_dofs(nodes);
+                let dofs = [
+                    dof_manager.get_eq_index(nodes[0], "ux").unwrap(),
+                    dof_manager.get_eq_index(nodes[0], "uy").unwrap(),
+                    dof_manager.get_eq_index(nodes[0], "uz").unwrap(),
+                    dof_manager.get_eq_index(nodes[1], "ux").unwrap(),
+                    dof_manager.get_eq_index(nodes[1], "uy").unwrap(),
+                    dof_manager.get_eq_index(nodes[1], "uz").unwrap(),
+                    dof_manager.get_eq_index(nodes[2], "ux").unwrap(),
+                    dof_manager.get_eq_index(nodes[2], "uy").unwrap(),
+                    dof_manager.get_eq_index(nodes[2], "uz").unwrap(),
+                    dof_manager.get_eq_index(nodes[3], "ux").unwrap(),
+                    dof_manager.get_eq_index(nodes[3], "uy").unwrap(),
+                    dof_manager.get_eq_index(nodes[3], "uz").unwrap(),
+                ];
                 for (local_row, global_row) in dofs.iter().copied().enumerate() {
                     for (local_col, global_col) in dofs.iter().copied().enumerate() {
                         triplets.add_triplet(
@@ -591,23 +628,43 @@ pub fn local_elasticity_stiffness(
 ) -> Result<[[f64; 6]; 6], ElasticityError> {
     validate_material(material)?;
     validate_thickness(thickness)?;
-    let (area, gradients) = triangle_geometry(mesh, triangle);
-    let constitutive = constitutive_matrix(material);
-    let b = strain_displacement_matrix(gradients);
-    let mut stiffness = [[0.0; 6]; 6];
 
-    for row in 0..6 {
-        for col in 0..6 {
-            let mut value = 0.0;
-            for alpha in 0..3 {
-                for beta in 0..3 {
-                    value += b[alpha][row] * constitutive[alpha][beta] * b[beta][col];
-                }
-            }
-            stiffness[row][col] = thickness * area * value;
+    let el = ElasticityTri3 {
+        nodes: &triangle.nodes,
+        thickness,
+    };
+    let node_coords: Vec<Point3> = triangle
+        .nodes
+        .iter()
+        .map(|&node_id| {
+            let p2 = mesh.points()[node_id];
+            Point3::new([p2.x, p2.y, 0.0])
+        })
+        .collect();
+
+    let mut properties = BTreeMap::new();
+    properties.insert("young_modulus".to_string(), material.young_modulus);
+    properties.insert("poisson_ratio".to_string(), material.poisson_ratio);
+    properties.insert("thickness".to_string(), thickness);
+    let model_val = match material.model {
+        ElasticityModel::PlaneStress => 0.0,
+        ElasticityModel::PlaneStrain => 1.0,
+    };
+    properties.insert("model".to_string(), model_val);
+
+    let stiffness_vec = el.local_stiffness(&node_coords, &properties).map_err(|_| {
+        ElasticityError::UnsupportedElementKind {
+            cell_index: 0,
+            kind: ElementKind::Tri3,
+        }
+    })?;
+
+    let mut stiffness = [[0.0; 6]; 6];
+    for r in 0..6 {
+        for c in 0..6 {
+            stiffness[r][c] = stiffness_vec[r][c];
         }
     }
-
     Ok(stiffness)
 }
 
@@ -617,24 +674,325 @@ pub fn local_tet4_elasticity_stiffness(
     material: ElasticityMaterial3D,
 ) -> Result<[[f64; 12]; 12], ElasticityError> {
     validate_material_3d(material)?;
-    let (volume, gradients, _) = tetrahedron_geometry(mesh, nodes);
-    let constitutive = constitutive_matrix_3d(material);
-    let b = strain_displacement_matrix_3d(gradients);
-    let mut stiffness = [[0.0; 12]; 12];
 
-    for row in 0..12 {
-        for col in 0..12 {
-            let mut value = 0.0;
-            for alpha in 0..6 {
-                for beta in 0..6 {
-                    value += b[alpha][row] * constitutive[alpha][beta] * b[beta][col];
-                }
-            }
-            stiffness[row][col] = volume * value;
+    let el = ElasticityTet4 { nodes: &nodes };
+    let node_coords: Vec<Point3> = nodes
+        .iter()
+        .map(|&node_id| mesh.points()[node_id])
+        .collect();
+
+    let mut properties = BTreeMap::new();
+    properties.insert("young_modulus".to_string(), material.young_modulus);
+    properties.insert("poisson_ratio".to_string(), material.poisson_ratio);
+
+    let stiffness_vec = el.local_stiffness(&node_coords, &properties).map_err(|_| {
+        ElasticityError::UnsupportedElementKind {
+            cell_index: 0,
+            kind: ElementKind::Tet4,
+        }
+    })?;
+
+    let mut stiffness = [[0.0; 12]; 12];
+    for r in 0..12 {
+        for c in 0..12 {
+            stiffness[r][c] = stiffness_vec[r][c];
         }
     }
-
     Ok(stiffness)
+}
+
+pub struct ElasticityTri3<'a> {
+    pub nodes: &'a [NodeId; 3],
+    pub thickness: f64,
+}
+
+impl<'a> Element for ElasticityTri3<'a> {
+    fn spatial_dimension(&self) -> usize {
+        2
+    }
+    fn node_count(&self) -> usize {
+        3
+    }
+    fn nodes(&self) -> &[NodeId] {
+        self.nodes
+    }
+    fn active_fields(&self) -> Vec<String> {
+        vec!["ux".to_string(), "uy".to_string()]
+    }
+
+    fn local_stiffness(
+        &self,
+        node_coords: &[Point3],
+        properties: &BTreeMap<String, f64>,
+    ) -> Result<Vec<Vec<f64>>, ElementError> {
+        let young_modulus = *properties
+            .get("young_modulus")
+            .ok_or_else(|| ElementError::MissingProperty("young_modulus".to_string()))?;
+        let poisson_ratio = *properties
+            .get("poisson_ratio")
+            .ok_or_else(|| ElementError::MissingProperty("poisson_ratio".to_string()))?;
+        let thickness = *properties
+            .get("thickness")
+            .ok_or_else(|| ElementError::MissingProperty("thickness".to_string()))?;
+        let model_val = *properties.get("model").unwrap_or(&0.0);
+        let model = if model_val == 1.0 {
+            ElasticityModel::PlaneStrain
+        } else {
+            ElasticityModel::PlaneStress
+        };
+
+        if node_coords.len() != 3 {
+            return Err(ElementError::InvalidNodeCount {
+                expected: 3,
+                actual: node_coords.len(),
+            });
+        }
+
+        let a = node_coords[0].coords;
+        let b = node_coords[1].coords;
+        let c = node_coords[2].coords;
+        let twice_area = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]);
+        let area = 0.5 * twice_area.abs();
+        if area <= f64::EPSILON {
+            return Err(ElementError::DegenerateGeometry);
+        }
+
+        let gradients = [
+            [(b[1] - c[1]) / twice_area, (c[0] - b[0]) / twice_area],
+            [(c[1] - a[1]) / twice_area, (a[0] - c[0]) / twice_area],
+            [(a[1] - b[1]) / twice_area, (b[0] - a[0]) / twice_area],
+        ];
+
+        let constitutive = constitutive_matrix(ElasticityMaterial {
+            young_modulus,
+            poisson_ratio,
+            model,
+        });
+        let strain_displacement = strain_displacement_matrix(gradients);
+
+        let mut stiffness = vec![vec![0.0; 6]; 6];
+        for row in 0..6 {
+            for col in 0..6 {
+                let mut value = 0.0;
+                for alpha in 0..3 {
+                    for beta in 0..3 {
+                        value += strain_displacement[alpha][row]
+                            * constitutive[alpha][beta]
+                            * strain_displacement[beta][col];
+                    }
+                }
+                stiffness[row][col] = thickness * area * value;
+            }
+        }
+        Ok(stiffness)
+    }
+
+    fn local_mass(
+        &self,
+        node_coords: &[Point3],
+        density: f64,
+        lumped: bool,
+    ) -> Result<Vec<Vec<f64>>, ElementError> {
+        if node_coords.len() != 3 {
+            return Err(ElementError::InvalidNodeCount {
+                expected: 3,
+                actual: node_coords.len(),
+            });
+        }
+        let a = node_coords[0].coords;
+        let b = node_coords[1].coords;
+        let c = node_coords[2].coords;
+        let twice_area = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]);
+        let area = 0.5 * twice_area.abs();
+        if area <= f64::EPSILON {
+            return Err(ElementError::DegenerateGeometry);
+        }
+        let total_mass = density * self.thickness * area;
+        let mut mass = vec![vec![0.0; 6]; 6];
+        if lumped {
+            let nodal_mass = total_mass / 3.0;
+            for i in 0..3 {
+                mass[2 * i][2 * i] = nodal_mass;
+                mass[2 * i + 1][2 * i + 1] = nodal_mass;
+            }
+        } else {
+            let val_diag = total_mass / 6.0;
+            let val_off = total_mass / 12.0;
+            for i in 0..3 {
+                for j in 0..3 {
+                    let factor = if i == j { val_diag } else { val_off };
+                    mass[2 * i][2 * j] = factor;
+                    mass[2 * i + 1][2 * j + 1] = factor;
+                }
+            }
+        }
+        Ok(mass)
+    }
+}
+
+pub struct ElasticityTet4<'a> {
+    pub nodes: &'a [NodeId; 4],
+}
+
+impl<'a> Element for ElasticityTet4<'a> {
+    fn spatial_dimension(&self) -> usize {
+        3
+    }
+    fn node_count(&self) -> usize {
+        4
+    }
+    fn nodes(&self) -> &[NodeId] {
+        self.nodes
+    }
+    fn active_fields(&self) -> Vec<String> {
+        vec!["ux".to_string(), "uy".to_string(), "uz".to_string()]
+    }
+
+    fn local_stiffness(
+        &self,
+        node_coords: &[Point3],
+        properties: &BTreeMap<String, f64>,
+    ) -> Result<Vec<Vec<f64>>, ElementError> {
+        let young_modulus = *properties
+            .get("young_modulus")
+            .ok_or_else(|| ElementError::MissingProperty("young_modulus".to_string()))?;
+        let poisson_ratio = *properties
+            .get("poisson_ratio")
+            .ok_or_else(|| ElementError::MissingProperty("poisson_ratio".to_string()))?;
+
+        if node_coords.len() != 4 {
+            return Err(ElementError::InvalidNodeCount {
+                expected: 4,
+                actual: node_coords.len(),
+            });
+        }
+
+        let [a, b, c, d] = [
+            node_coords[0],
+            node_coords[1],
+            node_coords[2],
+            node_coords[3],
+        ];
+        let jacobian = [
+            [
+                b.coords[0] - a.coords[0],
+                c.coords[0] - a.coords[0],
+                d.coords[0] - a.coords[0],
+            ],
+            [
+                b.coords[1] - a.coords[1],
+                c.coords[1] - a.coords[1],
+                d.coords[1] - a.coords[1],
+            ],
+            [
+                b.coords[2] - a.coords[2],
+                c.coords[2] - a.coords[2],
+                d.coords[2] - a.coords[2],
+            ],
+        ];
+        let determinant = determinant_3(jacobian);
+        let volume = determinant.abs() / 6.0;
+        if volume <= f64::EPSILON {
+            return Err(ElementError::DegenerateGeometry);
+        }
+        let inverse = inverse_3(jacobian, determinant);
+        let gradients = [
+            [
+                -(inverse[0][0] + inverse[1][0] + inverse[2][0]),
+                -(inverse[0][1] + inverse[1][1] + inverse[2][1]),
+                -(inverse[0][2] + inverse[1][2] + inverse[2][2]),
+            ],
+            inverse[0],
+            inverse[1],
+            inverse[2],
+        ];
+
+        let constitutive = constitutive_matrix_3d(ElasticityMaterial3D {
+            young_modulus,
+            poisson_ratio,
+        });
+        let strain_displacement = strain_displacement_matrix_3d(gradients);
+
+        let mut stiffness = vec![vec![0.0; 12]; 12];
+        for row in 0..12 {
+            for col in 0..12 {
+                let mut value = 0.0;
+                for alpha in 0..6 {
+                    for beta in 0..6 {
+                        value += strain_displacement[alpha][row]
+                            * constitutive[alpha][beta]
+                            * strain_displacement[beta][col];
+                    }
+                }
+                stiffness[row][col] = volume * value;
+            }
+        }
+        Ok(stiffness)
+    }
+
+    fn local_mass(
+        &self,
+        node_coords: &[Point3],
+        density: f64,
+        lumped: bool,
+    ) -> Result<Vec<Vec<f64>>, ElementError> {
+        if node_coords.len() != 4 {
+            return Err(ElementError::InvalidNodeCount {
+                expected: 4,
+                actual: node_coords.len(),
+            });
+        }
+        let [a, b, c, d] = [
+            node_coords[0],
+            node_coords[1],
+            node_coords[2],
+            node_coords[3],
+        ];
+        let jacobian = [
+            [
+                b.coords[0] - a.coords[0],
+                c.coords[0] - a.coords[0],
+                d.coords[0] - a.coords[0],
+            ],
+            [
+                b.coords[1] - a.coords[1],
+                c.coords[1] - a.coords[1],
+                d.coords[1] - a.coords[1],
+            ],
+            [
+                b.coords[2] - a.coords[2],
+                c.coords[2] - a.coords[2],
+                d.coords[2] - a.coords[2],
+            ],
+        ];
+        let determinant = determinant_3(jacobian);
+        let volume = determinant.abs() / 6.0;
+        if volume <= f64::EPSILON {
+            return Err(ElementError::DegenerateGeometry);
+        }
+        let total_mass = density * volume;
+        let mut mass = vec![vec![0.0; 12]; 12];
+        if lumped {
+            let nodal_mass = total_mass / 4.0;
+            for i in 0..4 {
+                mass[3 * i][3 * i] = nodal_mass;
+                mass[3 * i + 1][3 * i + 1] = nodal_mass;
+                mass[3 * i + 2][3 * i + 2] = nodal_mass;
+            }
+        } else {
+            let val_diag = total_mass / 10.0;
+            let val_off = total_mass / 20.0;
+            for i in 0..4 {
+                for j in 0..4 {
+                    let factor = if i == j { val_diag } else { val_off };
+                    mass[3 * i][3 * j] = factor;
+                    mass[3 * i + 1][3 * j + 1] = factor;
+                    mass[3 * i + 2][3 * j + 2] = factor;
+                }
+            }
+        }
+        Ok(mass)
+    }
 }
 
 fn validate_material(material: ElasticityMaterial) -> Result<(), ElasticityError> {
@@ -1102,6 +1460,7 @@ fn strain_displacement_matrix_3d(gradients: [[f64; 3]; 4]) -> [[f64; 12]; 6] {
     b
 }
 
+#[allow(dead_code)]
 fn triangle_geometry(mesh: &Mesh, triangle: &Tri3) -> (f64, [[f64; 2]; 3]) {
     let [a, b, c] = triangle.nodes.map(|node| mesh.points()[node]);
     let twice_area = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
@@ -1114,6 +1473,7 @@ fn triangle_geometry(mesh: &Mesh, triangle: &Tri3) -> (f64, [[f64; 2]; 3]) {
     (area, gradients)
 }
 
+#[allow(dead_code)]
 fn triangle_dofs(triangle: &Tri3) -> [usize; 6] {
     [
         dof_index(triangle.nodes[0], DisplacementComponent::X),
@@ -1129,6 +1489,7 @@ fn dof_index(node: NodeId, component: DisplacementComponent) -> usize {
     node * 2 + component.offset()
 }
 
+#[allow(dead_code)]
 fn tet4_dofs(nodes: [NodeId; 4]) -> [usize; 12] {
     [
         dof_index_3d(nodes[0], DisplacementComponent3D::X),

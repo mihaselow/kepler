@@ -1,6 +1,9 @@
 pub mod diffusion_reaction;
+pub mod dof;
 pub mod elasticity;
 pub mod electrostatics;
+pub mod element;
 pub mod heat;
 pub mod modal;
 pub mod poisson;
+pub mod quadrature;
