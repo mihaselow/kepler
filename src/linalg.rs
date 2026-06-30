@@ -187,6 +187,36 @@ pub struct TransientStepResult {
     pub linear_diagnostics: SolverDiagnostics,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewmarkSolverOptions {
+    pub time_step: f64,
+    pub steps: usize,
+    pub gamma: f64,
+    pub beta: f64,
+    pub linear_solver: LinearSolverOptions,
+}
+
+impl Default for NewmarkSolverOptions {
+    fn default() -> Self {
+        Self {
+            time_step: 1.0,
+            steps: 1,
+            gamma: 0.5,
+            beta: 0.25,
+            linear_solver: LinearSolverOptions::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewmarkStepResult {
+    pub time: f64,
+    pub displacements: Vec<f64>,
+    pub velocities: Vec<f64>,
+    pub accelerations: Vec<f64>,
+    pub linear_diagnostics: SolverDiagnostics,
+}
+
 pub trait LinearSolver {
     fn solve(&self, matrix: &CsMat<f64>, rhs: &[f64]) -> Result<LinearSolverResult, LinalgError>;
 }
@@ -251,6 +281,10 @@ pub enum LinalgError {
     InvalidTimeStep(f64),
     #[error("theta must be finite and in [0, 1], got {0}")]
     InvalidTheta(f64),
+    #[error("Newmark gamma must be positive and finite, got {0}")]
+    InvalidNewmarkGamma(f64),
+    #[error("Newmark beta must be positive and finite, got {0}")]
+    InvalidNewmarkBeta(f64),
     #[error("initial state length {initial_len} does not match matrix dimension {matrix_dim}")]
     TransientDimensionMismatch {
         matrix_dim: usize,
@@ -409,6 +443,113 @@ where
         steps.push(TransientStepResult {
             time,
             values: values.clone(),
+            linear_diagnostics: result.diagnostics,
+        });
+    }
+
+    Ok(steps)
+}
+
+pub fn solve_newmark_transient<F>(
+    mass: &CsMat<f64>,
+    damping: Option<&CsMat<f64>>,
+    stiffness: &CsMat<f64>,
+    initial_displacements: Vec<f64>,
+    initial_velocities: Vec<f64>,
+    source: F,
+    options: NewmarkSolverOptions,
+) -> Result<Vec<NewmarkStepResult>, LinalgError>
+where
+    F: Fn(f64) -> Vec<f64>,
+{
+    validate_newmark_inputs(
+        mass,
+        damping,
+        stiffness,
+        initial_displacements.len(),
+        initial_velocities.len(),
+        &options,
+    )?;
+
+    let dt = options.time_step;
+    let beta = options.beta;
+    let gamma = options.gamma;
+    let damping_matrix = damping.cloned();
+    let mut displacements = initial_displacements;
+    let mut velocities = initial_velocities;
+    let initial_source = source(0.0);
+    if initial_source.len() != displacements.len() {
+        return Err(LinalgError::DimensionMismatch {
+            matrix_dim: displacements.len(),
+            rhs_len: initial_source.len(),
+        });
+    }
+
+    let mut acceleration_rhs = initial_source;
+    subtract_assign(
+        &mut acceleration_rhs,
+        &mul_csr_vec(stiffness, &displacements),
+    );
+    if let Some(damping) = damping_matrix.as_ref() {
+        subtract_assign(&mut acceleration_rhs, &mul_csr_vec(damping, &velocities));
+    }
+    let initial_acceleration =
+        solve_linear_system(mass, &acceleration_rhs, options.linear_solver.clone())?;
+    let mut accelerations = initial_acceleration.values;
+
+    let mass_scale = 1.0 / (beta * dt * dt);
+    let damping_scale = gamma / (beta * dt);
+    let lhs = match damping_matrix.as_ref() {
+        Some(damping) => {
+            add_three_scaled_matrices(stiffness, damping, mass, 1.0, damping_scale, mass_scale)
+        }
+        None => add_scaled_matrices(stiffness, mass, 1.0, mass_scale),
+    };
+    let mut steps = Vec::with_capacity(options.steps);
+
+    for step_index in 1..=options.steps {
+        let time = step_index as f64 * dt;
+        let next_source = source(time);
+        if next_source.len() != displacements.len() {
+            return Err(LinalgError::DimensionMismatch {
+                matrix_dim: displacements.len(),
+                rhs_len: next_source.len(),
+            });
+        }
+
+        let predicted_displacements =
+            predict_displacements(&displacements, &velocities, &accelerations, dt, beta);
+        let predicted_velocities = predict_velocities(&velocities, &accelerations, dt, gamma);
+        let mut rhs = next_source;
+        axpy(
+            mass_scale,
+            &mul_csr_vec(mass, &predicted_displacements),
+            &mut rhs,
+        );
+        if let Some(damping) = damping_matrix.as_ref() {
+            let damping_values = mul_csr_vec(damping, &predicted_displacements);
+            axpy(damping_scale, &damping_values, &mut rhs);
+            subtract_assign(&mut rhs, &mul_csr_vec(damping, &predicted_velocities));
+        }
+
+        let result = solve_linear_system(&lhs, &rhs, options.linear_solver.clone())?;
+        let next_displacements = result.values;
+        let next_accelerations: Vec<_> = next_displacements
+            .iter()
+            .zip(&predicted_displacements)
+            .map(|(next, predicted)| (next - predicted) * mass_scale)
+            .collect();
+        let mut next_velocities = predicted_velocities;
+        axpy(gamma * dt, &next_accelerations, &mut next_velocities);
+
+        displacements = next_displacements;
+        velocities = next_velocities;
+        accelerations = next_accelerations;
+        steps.push(NewmarkStepResult {
+            time,
+            displacements: displacements.clone(),
+            velocities: velocities.clone(),
+            accelerations: accelerations.clone(),
             linear_diagnostics: result.diagnostics,
         });
     }
@@ -839,6 +980,55 @@ fn validate_transient_inputs(
     Ok(())
 }
 
+fn validate_newmark_inputs(
+    mass: &CsMat<f64>,
+    damping: Option<&CsMat<f64>>,
+    stiffness: &CsMat<f64>,
+    displacement_len: usize,
+    velocity_len: usize,
+    options: &NewmarkSolverOptions,
+) -> Result<(), LinalgError> {
+    validate_linear_system(mass, &vec![0.0; mass.rows()])?;
+    validate_linear_system(stiffness, &vec![0.0; stiffness.rows()])?;
+    if mass.rows() != stiffness.rows() {
+        return Err(LinalgError::DimensionMismatch {
+            matrix_dim: mass.rows(),
+            rhs_len: stiffness.rows(),
+        });
+    }
+    if let Some(damping) = damping {
+        validate_linear_system(damping, &vec![0.0; damping.rows()])?;
+        if damping.rows() != mass.rows() {
+            return Err(LinalgError::DimensionMismatch {
+                matrix_dim: mass.rows(),
+                rhs_len: damping.rows(),
+            });
+        }
+    }
+    if displacement_len != mass.rows() {
+        return Err(LinalgError::TransientDimensionMismatch {
+            matrix_dim: mass.rows(),
+            initial_len: displacement_len,
+        });
+    }
+    if velocity_len != mass.rows() {
+        return Err(LinalgError::TransientDimensionMismatch {
+            matrix_dim: mass.rows(),
+            initial_len: velocity_len,
+        });
+    }
+    if !options.time_step.is_finite() || options.time_step <= 0.0 {
+        return Err(LinalgError::InvalidTimeStep(options.time_step));
+    }
+    if !options.gamma.is_finite() || options.gamma <= 0.0 {
+        return Err(LinalgError::InvalidNewmarkGamma(options.gamma));
+    }
+    if !options.beta.is_finite() || options.beta <= 0.0 {
+        return Err(LinalgError::InvalidNewmarkBeta(options.beta));
+    }
+    Ok(())
+}
+
 fn add_scaled_matrices(
     first: &CsMat<f64>,
     second: &CsMat<f64>,
@@ -857,6 +1047,18 @@ fn add_scaled_matrices(
         }
     }
     triplets.to_csr()
+}
+
+fn add_three_scaled_matrices(
+    first: &CsMat<f64>,
+    second: &CsMat<f64>,
+    third: &CsMat<f64>,
+    first_scale: f64,
+    second_scale: f64,
+    third_scale: f64,
+) -> CsMat<f64> {
+    let partial = add_scaled_matrices(first, second, first_scale, second_scale);
+    add_scaled_matrices(&partial, third, 1.0, third_scale)
 }
 
 fn build_preconditioner(
@@ -917,6 +1119,37 @@ fn axpy(alpha: f64, x: &[f64], y: &mut [f64]) {
     for (y_value, x_value) in y.iter_mut().zip(x) {
         *y_value += alpha * x_value;
     }
+}
+
+fn subtract_assign(values: &mut [f64], decrement: &[f64]) {
+    for (value, decrement) in values.iter_mut().zip(decrement) {
+        *value -= decrement;
+    }
+}
+
+fn predict_displacements(
+    displacements: &[f64],
+    velocities: &[f64],
+    accelerations: &[f64],
+    dt: f64,
+    beta: f64,
+) -> Vec<f64> {
+    displacements
+        .iter()
+        .zip(velocities)
+        .zip(accelerations)
+        .map(|((displacement, velocity), acceleration)| {
+            displacement + dt * velocity + dt * dt * (0.5 - beta) * acceleration
+        })
+        .collect()
+}
+
+fn predict_velocities(velocities: &[f64], accelerations: &[f64], dt: f64, gamma: f64) -> Vec<f64> {
+    velocities
+        .iter()
+        .zip(accelerations)
+        .map(|(velocity, acceleration)| velocity + dt * (1.0 - gamma) * acceleration)
+        .collect()
 }
 
 fn dot(a: &[f64], b: &[f64]) -> f64 {

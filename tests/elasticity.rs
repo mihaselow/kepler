@@ -1,8 +1,9 @@
 use kepler::{
     DisplacementComponent, DisplacementConstraint, ElasticityError, ElasticityMaterial,
-    ElasticityModel, ElasticityProblem, Mesh, NodalForce, Point2, SolverOptions, Tri3,
+    ElasticityModel, ElasticityProblem, LinearSolverBackend, LinearSolverOptions, Mesh,
+    NewmarkSolverOptions, NodalForce, Point2, SolverOptions, TransientElasticityProblem, Tri3,
     fem::elasticity::{assemble_elasticity_system, local_elasticity_stiffness},
-    solve_elasticity,
+    solve_elasticity, solve_transient_elasticity,
 };
 
 const EPS: f64 = 1.0e-10;
@@ -141,6 +142,97 @@ fn elasticity_rejects_invalid_material_values() {
     let error = assemble_elasticity_system(&mesh, &problem).unwrap_err();
 
     assert_eq!(error, ElasticityError::InvalidYoungModulus(-1.0));
+}
+
+#[test]
+fn transient_elasticity_solves_constrained_triangle_dynamics() {
+    let mesh = unit_triangle();
+    let problem = TransientElasticityProblem {
+        material: material(),
+        thickness: 1.0,
+        density: 6.0,
+        constraints: vec![
+            DisplacementConstraint {
+                node: 0,
+                component: DisplacementComponent::X,
+                value: 0.0,
+            },
+            DisplacementConstraint {
+                node: 0,
+                component: DisplacementComponent::Y,
+                value: 0.0,
+            },
+            DisplacementConstraint {
+                node: 1,
+                component: DisplacementComponent::Y,
+                value: 0.0,
+            },
+            DisplacementConstraint {
+                node: 2,
+                component: DisplacementComponent::X,
+                value: 0.0,
+            },
+            DisplacementConstraint {
+                node: 2,
+                component: DisplacementComponent::Y,
+                value: 0.0,
+            },
+        ],
+        forces: |_| {
+            vec![NodalForce {
+                node: 1,
+                fx: 1.0,
+                fy: 0.0,
+            }]
+        },
+        initial_displacements: vec![[0.0, 0.0]; 3],
+        initial_velocities: vec![[0.0, 0.0]; 3],
+    };
+
+    let result = solve_transient_elasticity(
+        &mesh,
+        &problem,
+        NewmarkSolverOptions {
+            time_step: 1.0,
+            steps: 2,
+            linear_solver: LinearSolverOptions {
+                backend: LinearSolverBackend::DenseDirect,
+                ..LinearSolverOptions::default()
+            },
+            ..NewmarkSolverOptions::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(result.steps.len(), 2);
+    assert_close(result.steps[0].displacements[0][0], 0.0);
+    assert_close(result.steps[0].displacements[1][1], 0.0);
+    assert!(result.steps[0].displacements[1][0] > 0.0);
+    assert!(result.steps[1].displacements[1][0].is_finite());
+    assert!(result.steps[1].velocities[1][0].is_finite());
+    assert_eq!(
+        result.steps[0].diagnostics.backend,
+        LinearSolverBackend::DenseDirect
+    );
+}
+
+#[test]
+fn transient_elasticity_rejects_invalid_density() {
+    let mesh = unit_triangle();
+    let problem = TransientElasticityProblem {
+        material: material(),
+        thickness: 1.0,
+        density: 0.0,
+        constraints: vec![],
+        forces: |_| vec![],
+        initial_displacements: vec![[0.0, 0.0]; 3],
+        initial_velocities: vec![[0.0, 0.0]; 3],
+    };
+
+    let error =
+        solve_transient_elasticity(&mesh, &problem, NewmarkSolverOptions::default()).unwrap_err();
+
+    assert_eq!(error, ElasticityError::InvalidDensity(0.0));
 }
 
 fn unit_triangle() -> Mesh {

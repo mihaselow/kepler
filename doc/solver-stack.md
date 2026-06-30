@@ -169,6 +169,16 @@ The step equation is:
 
 `solve_transient_diffusion_reaction` and `solve_transient_diffusion_reaction_3d` apply the same theta-method path to scalar transport in 2D `Tri3` and 3D `Tet4` meshes. They assemble lumped storage, diffusion, and reaction matrices, support time-dependent source callbacks, reduce constant Dirichlet nodes, and return per-step linear diagnostics.
 
+`solve_newmark_transient` provides a generic second-order Newmark integrator for structural systems:
+
+```text
+M u'' + C u' + K u = f(t)
+```
+
+The default parameters are average acceleration (`gamma = 0.5`, `beta = 0.25`). It accepts optional damping, computes the initial acceleration from the initial load, and reports displacement, velocity, acceleration, and linear diagnostics for each step.
+
+`solve_transient_elasticity` and `solve_transient_elasticity_3d` wire Newmark into the 2D `Tri3` and 3D `Tet4` elasticity modules. They reuse the existing stiffness assembly, add lumped structural mass, reduce constant displacement constraints, and reconstruct nodal states at every time step.
+
 ## Current Limits
 
-The direct backend is intentionally dense and intended for small systems, verification fixtures, and as a future hook point for external sparse direct solvers. Nonlinear solves are still generic linalg-level primitives. Transient physics coverage currently includes heat transfer and diffusion-reaction; structural dynamics remains the next planned transient module.
+The direct backend is intentionally dense and intended for small systems, verification fixtures, and as a future hook point for external sparse direct solvers. Nonlinear solves are still generic linalg-level primitives. Transient physics coverage currently includes heat transfer, diffusion-reaction, and structural dynamics; electrostatics remains steady/quasi-static unless a charge-relaxation or electromagnetic formulation is added.

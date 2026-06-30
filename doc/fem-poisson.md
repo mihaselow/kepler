@@ -144,6 +144,14 @@ Current elasticity support includes:
 
 The elasticity module does not yet consume `ConditionSet`, region-targeted loads, body forces, traction/pressure conditions, `Hex8` elasticity, or result export helpers for stress/strain recovery.
 
+Transient structural dynamics uses Newmark time integration for the second-order system:
+
+```text
+M u'' + K u = f(t)
+```
+
+`solve_transient_elasticity` supports 2D `Tri3` meshes and `solve_transient_elasticity_3d` supports 3D `Tet4` meshes. Both APIs use lumped mass, constant displacement constraints, initial displacement/velocity fields, time-dependent nodal force callbacks, and per-step displacement, velocity, acceleration, and linear solver diagnostics. Damping is available in the generic linalg Newmark primitive but is not yet exposed through the physics-specific elasticity problem structs.
+
 ## Modal Analysis
 
 The modal module computes free-vibration modes from the existing elasticity stiffness assembly and a lumped diagonal mass model.

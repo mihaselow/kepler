@@ -1,7 +1,8 @@
 use kepler::{
     ConfiguredLinearSolver, LinalgError, LinearSolver, LinearSolverBackend, LinearSolverOptions,
-    NonlinearSolverOptions, NonlinearSystem, PreconditionerKind, TransientSolverOptions,
-    analyze_matrix, newton_solve, solve_linear_system, solve_linear_transient,
+    NewmarkSolverOptions, NonlinearSolverOptions, NonlinearSystem, PreconditionerKind,
+    TransientSolverOptions, analyze_matrix, newton_solve, solve_linear_system,
+    solve_linear_transient, solve_newmark_transient,
 };
 use sprs::TriMat;
 
@@ -229,6 +230,42 @@ fn transient_theta_method_solves_linear_decay() {
     assert_close(steps[0].values[0], 0.5);
     assert_close(steps[1].values[0], 0.25);
     assert_close(steps[1].time, 2.0);
+}
+
+#[test]
+fn newmark_transient_solves_constant_acceleration() {
+    let mass = csr_matrix(1, &[(0, 0, 1.0)]);
+    let stiffness = csr_matrix(1, &[(0, 0, 0.0)]);
+
+    let steps = solve_newmark_transient(
+        &mass,
+        None,
+        &stiffness,
+        vec![0.0],
+        vec![0.0],
+        |_| vec![1.0],
+        NewmarkSolverOptions {
+            time_step: 1.0,
+            steps: 2,
+            gamma: 0.5,
+            beta: 0.25,
+            linear_solver: LinearSolverOptions {
+                backend: LinearSolverBackend::DenseDirect,
+                ..LinearSolverOptions::default()
+            },
+        },
+    )
+    .unwrap();
+
+    assert_close(steps[0].displacements[0], 0.5);
+    assert_close(steps[0].velocities[0], 1.0);
+    assert_close(steps[0].accelerations[0], 1.0);
+    assert_close(steps[1].displacements[0], 2.0);
+    assert_close(steps[1].velocities[0], 2.0);
+    assert_eq!(
+        steps[0].linear_diagnostics.backend,
+        LinearSolverBackend::DenseDirect
+    );
 }
 
 struct SquareRootTwo;

@@ -5,7 +5,8 @@ use thiserror::Error;
 
 use crate::{
     linalg::{
-        LinalgError, LinearSolverOptions, SolverDiagnostics, SolverOptions, solve_linear_system,
+        LinalgError, LinearSolverOptions, NewmarkSolverOptions, SolverDiagnostics, SolverOptions,
+        solve_linear_system, solve_newmark_transient,
     },
     mesh::{ElementKind, Mesh, MeshTopology, NodeId, Point3, Tri3},
 };
@@ -106,6 +107,27 @@ pub struct ElasticityProblem3D {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct TransientElasticityProblem<F> {
+    pub material: ElasticityMaterial,
+    pub thickness: f64,
+    pub density: f64,
+    pub constraints: Vec<DisplacementConstraint>,
+    pub forces: F,
+    pub initial_displacements: Vec<[f64; 2]>,
+    pub initial_velocities: Vec<[f64; 2]>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransientElasticityProblem3D<F> {
+    pub material: ElasticityMaterial3D,
+    pub density: f64,
+    pub constraints: Vec<DisplacementConstraint3D>,
+    pub forces: F,
+    pub initial_displacements: Vec<[f64; 3]>,
+    pub initial_velocities: Vec<[f64; 3]>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ElasticityResult {
     pub displacements: Vec<[f64; 2]>,
     pub iterations: usize,
@@ -129,6 +151,34 @@ pub struct ElasticityResult3D {
 pub struct ElasticitySolverResult3D {
     pub displacements: Vec<[f64; 3]>,
     pub diagnostics: SolverDiagnostics,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransientElasticityStep {
+    pub time: f64,
+    pub displacements: Vec<[f64; 2]>,
+    pub velocities: Vec<[f64; 2]>,
+    pub accelerations: Vec<[f64; 2]>,
+    pub diagnostics: SolverDiagnostics,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransientElasticityResult {
+    pub steps: Vec<TransientElasticityStep>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransientElasticityStep3D {
+    pub time: f64,
+    pub displacements: Vec<[f64; 3]>,
+    pub velocities: Vec<[f64; 3]>,
+    pub accelerations: Vec<[f64; 3]>,
+    pub diagnostics: SolverDiagnostics,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransientElasticityResult3D {
+    pub steps: Vec<TransientElasticityStep3D>,
 }
 
 impl From<ElasticitySolverResult> for ElasticityResult {
@@ -159,6 +209,13 @@ pub enum ElasticityError {
     InvalidPoissonRatio(f64),
     #[error("thickness must be positive and finite, got {0}")]
     InvalidThickness(f64),
+    #[error("density must be positive and finite, got {0}")]
+    InvalidDensity(f64),
+    #[error("initial state length {initial_len} does not match mesh node count {node_count}")]
+    InitialStateLengthMismatch {
+        node_count: usize,
+        initial_len: usize,
+    },
     #[error("constraint references node {node_id}, but mesh has {node_count} nodes")]
     ConstraintNodeOutOfBounds { node_id: NodeId, node_count: usize },
     #[error("force references node {node_id}, but mesh has {node_count} nodes")]
@@ -180,6 +237,8 @@ pub enum ElasticityError {
         cell_index: usize,
         kind: ElementKind,
     },
+    #[error("all displacement degrees of freedom are constrained")]
+    NoActiveDegreesOfFreedom,
     #[error("linear solver failed")]
     LinearSolve(#[from] LinalgError),
 }
@@ -240,6 +299,178 @@ pub fn solve_elasticity_3d_with_solver(
     })
 }
 
+pub fn solve_transient_elasticity<F>(
+    mesh: &Mesh,
+    problem: &TransientElasticityProblem<F>,
+    options: NewmarkSolverOptions,
+) -> Result<TransientElasticityResult, ElasticityError>
+where
+    F: Fn(f64) -> Vec<NodalForce>,
+{
+    validate_material(problem.material)?;
+    validate_thickness(problem.thickness)?;
+    validate_density(problem.density)?;
+    validate_initial_state_lengths(
+        mesh.node_count(),
+        problem.initial_displacements.len(),
+        problem.initial_velocities.len(),
+    )?;
+    let constraints = validate_constraints(mesh.node_count(), &problem.constraints)?;
+    let active_dofs = active_dofs(mesh.node_count() * 2, &constraints);
+    if active_dofs.is_empty() {
+        return Err(ElasticityError::NoActiveDegreesOfFreedom);
+    }
+    let active_map = active_dof_map(mesh.node_count() * 2, &active_dofs);
+    let stiffness =
+        assemble_elasticity_stiffness_matrix(mesh, problem.material, problem.thickness)?;
+    let mass = assemble_lumped_elasticity_mass(mesh, problem.density, problem.thickness);
+    let reduced_stiffness = reduce_matrix(&stiffness, &active_dofs, &active_map);
+    let reduced_mass = reduce_matrix(&mass, &active_dofs, &active_map);
+    let initial_displacements = reduce_vector(
+        &flatten_displacements_2d(&problem.initial_displacements),
+        &active_dofs,
+    );
+    let initial_velocities = reduce_vector(
+        &flatten_displacements_2d(&problem.initial_velocities),
+        &active_dofs,
+    );
+    let source_values = transient_elasticity_sources(
+        mesh,
+        problem,
+        &stiffness,
+        &active_dofs,
+        &constraints,
+        &options,
+    )?;
+    let time_step = options.time_step;
+
+    let reduced_steps = solve_newmark_transient(
+        &reduced_mass,
+        None,
+        &reduced_stiffness,
+        initial_displacements,
+        initial_velocities,
+        move |time| {
+            let index = (time / time_step).round() as usize;
+            source_values[index].clone()
+        },
+        options,
+    )?;
+
+    Ok(TransientElasticityResult {
+        steps: reduced_steps
+            .into_iter()
+            .map(|step| TransientElasticityStep {
+                time: step.time,
+                displacements: unflatten_displacements_2d(&reconstruct_values(
+                    mesh.node_count() * 2,
+                    &active_dofs,
+                    &constraints,
+                    &step.displacements,
+                )),
+                velocities: unflatten_displacements_2d(&reconstruct_values(
+                    mesh.node_count() * 2,
+                    &active_dofs,
+                    &BTreeMap::new(),
+                    &step.velocities,
+                )),
+                accelerations: unflatten_displacements_2d(&reconstruct_values(
+                    mesh.node_count() * 2,
+                    &active_dofs,
+                    &BTreeMap::new(),
+                    &step.accelerations,
+                )),
+                diagnostics: step.linear_diagnostics,
+            })
+            .collect(),
+    })
+}
+
+pub fn solve_transient_elasticity_3d<F>(
+    mesh: &MeshTopology<3>,
+    problem: &TransientElasticityProblem3D<F>,
+    options: NewmarkSolverOptions,
+) -> Result<TransientElasticityResult3D, ElasticityError>
+where
+    F: Fn(f64) -> Vec<NodalForce3D>,
+{
+    validate_material_3d(problem.material)?;
+    validate_density(problem.density)?;
+    validate_initial_state_lengths(
+        mesh.points().len(),
+        problem.initial_displacements.len(),
+        problem.initial_velocities.len(),
+    )?;
+    let constraints = validate_constraints_3d(mesh.points().len(), &problem.constraints)?;
+    let active_dofs = active_dofs(mesh.points().len() * 3, &constraints);
+    if active_dofs.is_empty() {
+        return Err(ElasticityError::NoActiveDegreesOfFreedom);
+    }
+    let active_map = active_dof_map(mesh.points().len() * 3, &active_dofs);
+    let stiffness = assemble_elasticity_3d_stiffness_matrix(mesh, problem.material)?;
+    let mass = assemble_lumped_elasticity_mass_3d(mesh, problem.density);
+    let reduced_stiffness = reduce_matrix(&stiffness, &active_dofs, &active_map);
+    let reduced_mass = reduce_matrix(&mass, &active_dofs, &active_map);
+    let initial_displacements = reduce_vector(
+        &flatten_displacements_3d(&problem.initial_displacements),
+        &active_dofs,
+    );
+    let initial_velocities = reduce_vector(
+        &flatten_displacements_3d(&problem.initial_velocities),
+        &active_dofs,
+    );
+    let source_values = transient_elasticity_sources_3d(
+        mesh,
+        problem,
+        &stiffness,
+        &active_dofs,
+        &constraints,
+        &options,
+    )?;
+    let time_step = options.time_step;
+
+    let reduced_steps = solve_newmark_transient(
+        &reduced_mass,
+        None,
+        &reduced_stiffness,
+        initial_displacements,
+        initial_velocities,
+        move |time| {
+            let index = (time / time_step).round() as usize;
+            source_values[index].clone()
+        },
+        options,
+    )?;
+
+    Ok(TransientElasticityResult3D {
+        steps: reduced_steps
+            .into_iter()
+            .map(|step| TransientElasticityStep3D {
+                time: step.time,
+                displacements: unflatten_displacements_3d(&reconstruct_values(
+                    mesh.points().len() * 3,
+                    &active_dofs,
+                    &constraints,
+                    &step.displacements,
+                )),
+                velocities: unflatten_displacements_3d(&reconstruct_values(
+                    mesh.points().len() * 3,
+                    &active_dofs,
+                    &BTreeMap::new(),
+                    &step.velocities,
+                )),
+                accelerations: unflatten_displacements_3d(&reconstruct_values(
+                    mesh.points().len() * 3,
+                    &active_dofs,
+                    &BTreeMap::new(),
+                    &step.accelerations,
+                )),
+                diagnostics: step.linear_diagnostics,
+            })
+            .collect(),
+    })
+}
+
 pub fn assemble_elasticity_system(
     mesh: &Mesh,
     problem: &ElasticityProblem,
@@ -248,19 +479,8 @@ pub fn assemble_elasticity_system(
     validate_thickness(problem.thickness)?;
     let constraints = validate_constraints(mesh.node_count(), &problem.constraints)?;
     let dof_count = mesh.node_count() * 2;
-    let mut triplets = TriMat::with_capacity((dof_count, dof_count), mesh.triangles().len() * 36);
+    let matrix = assemble_elasticity_stiffness_matrix(mesh, problem.material, problem.thickness)?;
     let mut rhs = vec![0.0; dof_count];
-
-    for triangle in mesh.triangles() {
-        let stiffness =
-            local_elasticity_stiffness(mesh, triangle, problem.material, problem.thickness)?;
-        let dofs = triangle_dofs(triangle);
-        for (local_row, global_row) in dofs.iter().copied().enumerate() {
-            for (local_col, global_col) in dofs.iter().copied().enumerate() {
-                triplets.add_triplet(global_row, global_col, stiffness[local_row][local_col]);
-            }
-        }
-    }
 
     for force in &problem.forces {
         if force.node >= mesh.node_count() {
@@ -273,7 +493,6 @@ pub fn assemble_elasticity_system(
         rhs[dof_index(force.node, DisplacementComponent::Y)] += force.fy;
     }
 
-    let matrix = triplets.to_csr();
     Ok(apply_constraints(matrix, rhs, &constraints))
 }
 
@@ -284,19 +503,62 @@ pub fn assemble_elasticity_3d_system(
     validate_material_3d(problem.material)?;
     let constraints = validate_constraints_3d(mesh.points().len(), &problem.constraints)?;
     let dof_count = mesh.points().len() * 3;
+    let matrix = assemble_elasticity_3d_stiffness_matrix(mesh, problem.material)?;
+    let mut rhs = vec![0.0; dof_count];
+
+    for force in &problem.forces {
+        if force.node >= mesh.points().len() {
+            return Err(ElasticityError::ForceNodeOutOfBounds {
+                node_id: force.node,
+                node_count: mesh.points().len(),
+            });
+        }
+        rhs[dof_index_3d(force.node, DisplacementComponent3D::X)] += force.fx;
+        rhs[dof_index_3d(force.node, DisplacementComponent3D::Y)] += force.fy;
+        rhs[dof_index_3d(force.node, DisplacementComponent3D::Z)] += force.fz;
+    }
+
+    Ok(apply_constraints(matrix, rhs, &constraints))
+}
+
+fn assemble_elasticity_stiffness_matrix(
+    mesh: &Mesh,
+    material: ElasticityMaterial,
+    thickness: f64,
+) -> Result<CsMat<f64>, ElasticityError> {
+    let dof_count = mesh.node_count() * 2;
+    let mut triplets = TriMat::with_capacity((dof_count, dof_count), mesh.triangles().len() * 36);
+
+    for triangle in mesh.triangles() {
+        let stiffness = local_elasticity_stiffness(mesh, triangle, material, thickness)?;
+        let dofs = triangle_dofs(triangle);
+        for (local_row, global_row) in dofs.iter().copied().enumerate() {
+            for (local_col, global_col) in dofs.iter().copied().enumerate() {
+                triplets.add_triplet(global_row, global_col, stiffness[local_row][local_col]);
+            }
+        }
+    }
+
+    Ok(triplets.to_csr())
+}
+
+fn assemble_elasticity_3d_stiffness_matrix(
+    mesh: &MeshTopology<3>,
+    material: ElasticityMaterial3D,
+) -> Result<CsMat<f64>, ElasticityError> {
+    let dof_count = mesh.points().len() * 3;
     let tet_count = mesh
         .cells()
         .iter()
         .filter(|cell| cell.kind == ElementKind::Tet4)
         .count();
     let mut triplets = TriMat::with_capacity((dof_count, dof_count), tet_count * 144);
-    let mut rhs = vec![0.0; dof_count];
 
     for (cell_index, cell) in mesh.cells().iter().enumerate() {
         match cell.kind {
             ElementKind::Tet4 => {
                 let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2], cell.nodes[3]];
-                let stiffness = local_tet4_elasticity_stiffness(mesh, nodes, problem.material)?;
+                let stiffness = local_tet4_elasticity_stiffness(mesh, nodes, material)?;
                 let dofs = tet4_dofs(nodes);
                 for (local_row, global_row) in dofs.iter().copied().enumerate() {
                     for (local_col, global_col) in dofs.iter().copied().enumerate() {
@@ -318,19 +580,7 @@ pub fn assemble_elasticity_3d_system(
         }
     }
 
-    for force in &problem.forces {
-        if force.node >= mesh.points().len() {
-            return Err(ElasticityError::ForceNodeOutOfBounds {
-                node_id: force.node,
-                node_count: mesh.points().len(),
-            });
-        }
-        rhs[dof_index_3d(force.node, DisplacementComponent3D::X)] += force.fx;
-        rhs[dof_index_3d(force.node, DisplacementComponent3D::Y)] += force.fy;
-        rhs[dof_index_3d(force.node, DisplacementComponent3D::Z)] += force.fz;
-    }
-
-    Ok(apply_constraints(triplets.to_csr(), rhs, &constraints))
+    Ok(triplets.to_csr())
 }
 
 pub fn local_elasticity_stiffness(
@@ -421,6 +671,34 @@ fn validate_thickness(thickness: f64) -> Result<(), ElasticityError> {
     }
 }
 
+fn validate_density(density: f64) -> Result<(), ElasticityError> {
+    if density.is_finite() && density > 0.0 {
+        Ok(())
+    } else {
+        Err(ElasticityError::InvalidDensity(density))
+    }
+}
+
+fn validate_initial_state_lengths(
+    node_count: usize,
+    displacement_len: usize,
+    velocity_len: usize,
+) -> Result<(), ElasticityError> {
+    if displacement_len != node_count {
+        return Err(ElasticityError::InitialStateLengthMismatch {
+            node_count,
+            initial_len: displacement_len,
+        });
+    }
+    if velocity_len != node_count {
+        return Err(ElasticityError::InitialStateLengthMismatch {
+            node_count,
+            initial_len: velocity_len,
+        });
+    }
+    Ok(())
+}
+
 fn validate_constraints(
     node_count: usize,
     constraints: &[DisplacementConstraint],
@@ -499,6 +777,235 @@ fn apply_constraints(
     }
 
     (constrained_triplets.to_csr(), adjusted_rhs)
+}
+
+fn active_dofs(dof_count: usize, constraints: &BTreeMap<usize, f64>) -> Vec<usize> {
+    (0..dof_count)
+        .filter(|dof| !constraints.contains_key(dof))
+        .collect()
+}
+
+fn active_dof_map(dof_count: usize, active_dofs: &[usize]) -> Vec<Option<usize>> {
+    let mut map = vec![None; dof_count];
+    for (active_index, &dof) in active_dofs.iter().enumerate() {
+        map[dof] = Some(active_index);
+    }
+    map
+}
+
+fn reduce_matrix(
+    matrix: &CsMat<f64>,
+    active_dofs: &[usize],
+    active_map: &[Option<usize>],
+) -> CsMat<f64> {
+    let mut triplets = TriMat::new((active_dofs.len(), active_dofs.len()));
+    for (row_index, row) in matrix.outer_iterator().enumerate() {
+        let Some(active_row) = active_map[row_index] else {
+            continue;
+        };
+        for (col_index, value) in row.iter() {
+            if let Some(active_col) = active_map[col_index] {
+                triplets.add_triplet(active_row, active_col, *value);
+            }
+        }
+    }
+    triplets.to_csr()
+}
+
+fn reduce_vector(values: &[f64], active_dofs: &[usize]) -> Vec<f64> {
+    active_dofs.iter().map(|&dof| values[dof]).collect()
+}
+
+fn reduce_source(
+    full_force: &[f64],
+    stiffness: &CsMat<f64>,
+    active_dofs: &[usize],
+    constraints: &BTreeMap<usize, f64>,
+) -> Vec<f64> {
+    let mut reduced = Vec::with_capacity(active_dofs.len());
+    for &dof in active_dofs {
+        let mut value = full_force[dof];
+        if let Some(row) = stiffness.outer_view(dof) {
+            for (col_index, stiffness_value) in row.iter() {
+                if let Some(boundary_value) = constraints.get(&col_index) {
+                    value -= stiffness_value * boundary_value;
+                }
+            }
+        }
+        reduced.push(value);
+    }
+    reduced
+}
+
+fn reconstruct_values(
+    dof_count: usize,
+    active_dofs: &[usize],
+    constraints: &BTreeMap<usize, f64>,
+    active_values: &[f64],
+) -> Vec<f64> {
+    let mut values = vec![0.0; dof_count];
+    for (&dof, &value) in constraints {
+        values[dof] = value;
+    }
+    for (&dof, &value) in active_dofs.iter().zip(active_values) {
+        values[dof] = value;
+    }
+    values
+}
+
+fn assemble_lumped_elasticity_mass(mesh: &Mesh, density: f64, thickness: f64) -> CsMat<f64> {
+    let mut mass = vec![0.0; mesh.node_count() * 2];
+    for triangle in mesh.triangles() {
+        let [a, b, c] = triangle.nodes.map(|node| mesh.points()[node]);
+        let twice_area = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
+        let nodal_mass = density * thickness * twice_area.abs() / 6.0;
+        for node in triangle.nodes {
+            mass[dof_index(node, DisplacementComponent::X)] += nodal_mass;
+            mass[dof_index(node, DisplacementComponent::Y)] += nodal_mass;
+        }
+    }
+    diagonal_matrix(mass)
+}
+
+fn assemble_lumped_elasticity_mass_3d(mesh: &MeshTopology<3>, density: f64) -> CsMat<f64> {
+    let mut mass = vec![0.0; mesh.points().len() * 3];
+    for cell in mesh.cells() {
+        if cell.kind != ElementKind::Tet4 {
+            continue;
+        }
+        let nodes = [cell.nodes[0], cell.nodes[1], cell.nodes[2], cell.nodes[3]];
+        let (volume, _, _) = tetrahedron_geometry(mesh, nodes);
+        let nodal_mass = density * volume / 4.0;
+        for node in nodes {
+            mass[dof_index_3d(node, DisplacementComponent3D::X)] += nodal_mass;
+            mass[dof_index_3d(node, DisplacementComponent3D::Y)] += nodal_mass;
+            mass[dof_index_3d(node, DisplacementComponent3D::Z)] += nodal_mass;
+        }
+    }
+    diagonal_matrix(mass)
+}
+
+fn diagonal_matrix(values: Vec<f64>) -> CsMat<f64> {
+    let mut triplets = TriMat::with_capacity((values.len(), values.len()), values.len());
+    for (index, value) in values.into_iter().enumerate() {
+        triplets.add_triplet(index, index, value);
+    }
+    triplets.to_csr()
+}
+
+fn transient_elasticity_sources<F>(
+    mesh: &Mesh,
+    problem: &TransientElasticityProblem<F>,
+    stiffness: &CsMat<f64>,
+    active_dofs: &[usize],
+    constraints: &BTreeMap<usize, f64>,
+    options: &NewmarkSolverOptions,
+) -> Result<Vec<Vec<f64>>, ElasticityError>
+where
+    F: Fn(f64) -> Vec<NodalForce>,
+{
+    let mut sources = Vec::with_capacity(options.steps + 1);
+    for step in 0..=options.steps {
+        let time = step as f64 * options.time_step;
+        let full_force = assemble_force_vector(mesh.node_count(), &(problem.forces)(time))?;
+        sources.push(reduce_source(
+            &full_force,
+            stiffness,
+            active_dofs,
+            constraints,
+        ));
+    }
+    Ok(sources)
+}
+
+fn transient_elasticity_sources_3d<F>(
+    mesh: &MeshTopology<3>,
+    problem: &TransientElasticityProblem3D<F>,
+    stiffness: &CsMat<f64>,
+    active_dofs: &[usize],
+    constraints: &BTreeMap<usize, f64>,
+    options: &NewmarkSolverOptions,
+) -> Result<Vec<Vec<f64>>, ElasticityError>
+where
+    F: Fn(f64) -> Vec<NodalForce3D>,
+{
+    let mut sources = Vec::with_capacity(options.steps + 1);
+    for step in 0..=options.steps {
+        let time = step as f64 * options.time_step;
+        let full_force = assemble_force_vector_3d(mesh.points().len(), &(problem.forces)(time))?;
+        sources.push(reduce_source(
+            &full_force,
+            stiffness,
+            active_dofs,
+            constraints,
+        ));
+    }
+    Ok(sources)
+}
+
+fn assemble_force_vector(
+    node_count: usize,
+    forces: &[NodalForce],
+) -> Result<Vec<f64>, ElasticityError> {
+    let mut rhs = vec![0.0; node_count * 2];
+    for force in forces {
+        if force.node >= node_count {
+            return Err(ElasticityError::ForceNodeOutOfBounds {
+                node_id: force.node,
+                node_count,
+            });
+        }
+        rhs[dof_index(force.node, DisplacementComponent::X)] += force.fx;
+        rhs[dof_index(force.node, DisplacementComponent::Y)] += force.fy;
+    }
+    Ok(rhs)
+}
+
+fn assemble_force_vector_3d(
+    node_count: usize,
+    forces: &[NodalForce3D],
+) -> Result<Vec<f64>, ElasticityError> {
+    let mut rhs = vec![0.0; node_count * 3];
+    for force in forces {
+        if force.node >= node_count {
+            return Err(ElasticityError::ForceNodeOutOfBounds {
+                node_id: force.node,
+                node_count,
+            });
+        }
+        rhs[dof_index_3d(force.node, DisplacementComponent3D::X)] += force.fx;
+        rhs[dof_index_3d(force.node, DisplacementComponent3D::Y)] += force.fy;
+        rhs[dof_index_3d(force.node, DisplacementComponent3D::Z)] += force.fz;
+    }
+    Ok(rhs)
+}
+
+fn flatten_displacements_2d(values: &[[f64; 2]]) -> Vec<f64> {
+    values
+        .iter()
+        .flat_map(|value| [value[0], value[1]])
+        .collect()
+}
+
+fn flatten_displacements_3d(values: &[[f64; 3]]) -> Vec<f64> {
+    values
+        .iter()
+        .flat_map(|value| [value[0], value[1], value[2]])
+        .collect()
+}
+
+fn unflatten_displacements_2d(values: &[f64]) -> Vec<[f64; 2]> {
+    values
+        .chunks_exact(2)
+        .map(|values| [values[0], values[1]])
+        .collect()
+}
+
+fn unflatten_displacements_3d(values: &[f64]) -> Vec<[f64; 3]> {
+    values
+        .chunks_exact(3)
+        .map(|values| [values[0], values[1], values[2]])
+        .collect()
 }
 
 fn constitutive_matrix(material: ElasticityMaterial) -> [[f64; 3]; 3] {

@@ -1,8 +1,9 @@
 use kepler::{
     Cell, DisplacementComponent3D, DisplacementConstraint3D, ElasticityError, ElasticityMaterial3D,
-    ElasticityProblem3D, ElementKind, MeshTopology, NodalForce3D, PointD, SolverOptions,
+    ElasticityProblem3D, ElementKind, LinearSolverBackend, LinearSolverOptions, MeshTopology,
+    NewmarkSolverOptions, NodalForce3D, PointD, SolverOptions, TransientElasticityProblem3D,
     fem::elasticity::{assemble_elasticity_3d_system, local_tet4_elasticity_stiffness},
-    solve_elasticity_3d,
+    solve_elasticity_3d, solve_transient_elasticity_3d,
 };
 
 const EPS: f64 = 1.0e-10;
@@ -113,6 +114,63 @@ fn elasticity_3d_rejects_hex8_until_implemented() {
             kind: ElementKind::Hex8,
         }
     ));
+}
+
+#[test]
+fn transient_elasticity_3d_solves_constrained_tetrahedron_dynamics() {
+    let mesh = unit_tetrahedron();
+    let mut constraints = fixed_nodes(&[0, 2, 3]);
+    constraints.push(DisplacementConstraint3D {
+        node: 1,
+        component: DisplacementComponent3D::Y,
+        value: 0.0,
+    });
+    constraints.push(DisplacementConstraint3D {
+        node: 1,
+        component: DisplacementComponent3D::Z,
+        value: 0.0,
+    });
+    let problem = TransientElasticityProblem3D {
+        material: material(),
+        density: 24.0,
+        constraints,
+        forces: |_| {
+            vec![NodalForce3D {
+                node: 1,
+                fx: 1.0,
+                fy: 0.0,
+                fz: 0.0,
+            }]
+        },
+        initial_displacements: vec![[0.0, 0.0, 0.0]; 4],
+        initial_velocities: vec![[0.0, 0.0, 0.0]; 4],
+    };
+
+    let result = solve_transient_elasticity_3d(
+        &mesh,
+        &problem,
+        NewmarkSolverOptions {
+            time_step: 1.0,
+            steps: 2,
+            linear_solver: LinearSolverOptions {
+                backend: LinearSolverBackend::DenseDirect,
+                ..LinearSolverOptions::default()
+            },
+            ..NewmarkSolverOptions::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(result.steps.len(), 2);
+    assert_close(result.steps[0].displacements[0][0], 0.0);
+    assert_close(result.steps[0].displacements[1][1], 0.0);
+    assert!(result.steps[0].displacements[1][0] > 0.0);
+    assert!(result.steps[1].displacements[1][0].is_finite());
+    assert!(result.steps[1].velocities[1][0].is_finite());
+    assert_eq!(
+        result.steps[0].diagnostics.backend,
+        LinearSolverBackend::DenseDirect
+    );
 }
 
 fn unit_tetrahedron() -> MeshTopology<3> {

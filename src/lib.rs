@@ -26,8 +26,11 @@ pub use fem::elasticity::{
     DisplacementComponent, DisplacementComponent3D, DisplacementConstraint,
     DisplacementConstraint3D, ElasticityError, ElasticityMaterial, ElasticityMaterial3D,
     ElasticityModel, ElasticityProblem, ElasticityProblem3D, ElasticityResult, ElasticityResult3D,
-    ElasticitySolverResult, ElasticitySolverResult3D, NodalForce, NodalForce3D, solve_elasticity,
-    solve_elasticity_3d, solve_elasticity_3d_with_solver, solve_elasticity_with_solver,
+    ElasticitySolverResult, ElasticitySolverResult3D, NodalForce, NodalForce3D,
+    TransientElasticityProblem, TransientElasticityProblem3D, TransientElasticityResult,
+    TransientElasticityResult3D, TransientElasticityStep, TransientElasticityStep3D,
+    solve_elasticity, solve_elasticity_3d, solve_elasticity_3d_with_solver,
+    solve_elasticity_with_solver, solve_transient_elasticity, solve_transient_elasticity_3d,
 };
 pub use fem::electrostatics::{
     ElectricPotentialResult, ElectricPotentialSolverResult, ElectrostaticProblem,
@@ -58,10 +61,11 @@ pub use io::{
 };
 pub use linalg::{
     ConfiguredLinearSolver, DiagonalDiagnostics, LinalgError, LinearSolver, LinearSolverBackend,
-    LinearSolverOptions, MatrixDiagnostics, NonlinearSolverDiagnostics, NonlinearSolverOptions,
-    NonlinearSolverResult, NonlinearSystem, PreconditionerKind, SolverDiagnostics, SolverOptions,
-    SparsityStats, SpdHeuristics, SymmetryDiagnostics, TransientSolverOptions, TransientStepResult,
-    analyze_matrix, newton_solve, solve_linear_system, solve_linear_transient,
+    LinearSolverOptions, MatrixDiagnostics, NewmarkSolverOptions, NewmarkStepResult,
+    NonlinearSolverDiagnostics, NonlinearSolverOptions, NonlinearSolverResult, NonlinearSystem,
+    PreconditionerKind, SolverDiagnostics, SolverOptions, SparsityStats, SpdHeuristics,
+    SymmetryDiagnostics, TransientSolverOptions, TransientStepResult, analyze_matrix, newton_solve,
+    solve_linear_system, solve_linear_transient, solve_newmark_transient,
 };
 pub use mesh::{
     Cell, CellId, ElementKind, EntityDimension, FacetId, FieldId, MaterialId, Mesh, MeshError,
