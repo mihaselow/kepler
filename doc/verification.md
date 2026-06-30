@@ -34,6 +34,7 @@ Physics verification tests:
 - `tests/elasticity.rs`
 - `tests/elasticity_3d.rs`
 - `tests/modal.rs`
+- `tests/structural_verification.rs`
 
 Solver stack tests:
 
@@ -67,15 +68,15 @@ These fixtures cover the legacy mesh/params path and the v1 project workflow pat
 - Heat: steady 2D/3D and transient 2D theta integration.
 - Diffusion-reaction: 2D/3D reaction matrices and transient 2D/3D theta integration.
 - Electrostatics: 2D/3D steady/quasi-static scalar potential and formulation marker.
-- Elasticity: 2D/3D stiffness symmetry, rigid translations, constrained solves, transient Newmark dynamics.
-- Modal analysis: 2D/3D sorted modes, density validation, constrained model validation.
+- Elasticity: 2D/3D stiffness symmetry, rigid translations, constrained solves, affine displacement constraints, transient Newmark dynamics.
+- Modal analysis: 2D/3D sorted modes, density validation, constrained model validation, one-DOF frequency references.
 - Solver stack: CG, GMRES, dense direct, Jacobi preconditioning, diagnostics, Newton, theta transient, Newmark transient.
 - Import/export: legacy mesh/params/solution, Gmsh physical groups, VTK scalar output.
 - Project workflows: v1 project parsing/validation, CLI validation/inspection, REST validation/solve, async jobs, artifact upload/download.
 
 ## Known Gaps
 
-- Manufactured-solution suites are not yet complete for structural and modal physics.
+- Manufactured-solution suites are not yet complete for non-affine structural stress recovery or modal benchmark problems.
 - Benchmarks are not yet implemented.
 - CAD import workflow fixtures are not yet present.
 - REST project jobs and artifacts are in-memory only.

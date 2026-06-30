@@ -22,6 +22,7 @@ const REQUIRED_TESTS: &[&str] = &[
     "tests/elasticity.rs",
     "tests/elasticity_3d.rs",
     "tests/modal.rs",
+    "tests/structural_verification.rs",
     "tests/solver_stack.rs",
     "tests/physics_solver_stack.rs",
     "tests/transient_coverage.rs",
