@@ -58,7 +58,7 @@ pub use fem::poisson::{
     solve_poisson_3d, solve_poisson_3d_with_solver, solve_poisson_with_solver,
 };
 pub use fem::quadrature::{integrate_line_boundary, integrate_triangle_boundary};
-pub use fem::structural::{Beam2D, Truss};
+pub use fem::structural::{Beam2D, Beam3D, Truss};
 pub use io::{
     FileIoError,
     cad::{

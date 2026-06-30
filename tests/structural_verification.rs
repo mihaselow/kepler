@@ -302,3 +302,74 @@ fn assert_close(actual: f64, expected: f64) {
         "expected {actual} to be within {EPS} of {expected}",
     );
 }
+
+#[test]
+fn test_beam_3d_element() {
+    use kepler::fem::element::Element;
+    use kepler::{Beam3D, Point3};
+    use std::collections::BTreeMap;
+
+    let nodes = [0, 1];
+    let el = Beam3D {
+        nodes: &nodes,
+        area: 0.01,
+        moment_y: 1.0e-5,
+        moment_z: 2.0e-5,
+        torsional_constant: 3.0e-5,
+        local_y_direction: [0.0, 1.0, 0.0],
+    };
+
+    let coords = [Point3::new([0.0, 0.0, 0.0]), Point3::new([2.0, 0.0, 0.0])];
+
+    let mut properties = BTreeMap::new();
+    properties.insert("young_modulus".to_string(), 200e9);
+    properties.insert("poisson_ratio".to_string(), 0.3);
+
+    let k = el.local_stiffness(&coords, &properties).unwrap();
+    assert_eq!(k.len(), 12);
+
+    // 1. Axial stiffness: E * A / L = 200e9 * 0.01 / 2.0 = 1e9
+    assert!((k[0][0] - 1e9).abs() < 1.0);
+    assert!((k[0][6] - -1e9).abs() < 1.0);
+
+    // 2. Torsional stiffness: G * J / L where G = E / 2.6
+    let g = 200e9 / 2.6;
+    let expected_torsion = g * 3.0e-5 / 2.0;
+    assert!((k[3][3] - expected_torsion).abs() < 1.0);
+    assert!((k[3][9] - -expected_torsion).abs() < 1.0);
+
+    // 3. Bending around z (in x-y plane): 12 * E * Iz / L^3 = 12 * 200e9 * 2.0e-5 / 8.0 = 6e6
+    assert!((k[1][1] - 6e6).abs() < 1.0);
+    assert!((k[1][7] - -6e6).abs() < 1.0);
+
+    // 4. Bending around y (in x-z plane): 12 * E * Iy / L^3 = 12 * 200e9 * 1.0e-5 / 8.0 = 3e6
+    assert!((k[2][2] - 3e6).abs() < 1.0);
+    assert!((k[2][8] - -3e6).abs() < 1.0);
+
+    // 5. Check symmetry
+    for r in 0..12 {
+        for c in 0..12 {
+            assert!(
+                (k[r][c] - k[c][r]).abs() < 1.0e-3,
+                "Symmetry failed at ({}, {})",
+                r,
+                c
+            );
+        }
+    }
+
+    // 6. Rigid translation null modes
+    let mut k_arr = [[0.0; 12]; 12];
+    for r in 0..12 {
+        for c in 0..12 {
+            k_arr[r][c] = k[r][c];
+        }
+    }
+
+    let x_translation = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    let y_translation = [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0];
+    let z_translation = [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0];
+    assert_matrix_vector_close_3d(k_arr, x_translation, [0.0; 12]);
+    assert_matrix_vector_close_3d(k_arr, y_translation, [0.0; 12]);
+    assert_matrix_vector_close_3d(k_arr, z_translation, [0.0; 12]);
+}

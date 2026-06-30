@@ -341,6 +341,395 @@ impl<'a> Element for Beam2D<'a> {
     }
 }
 
+pub struct Beam3D<'a> {
+    pub nodes: &'a [NodeId; 2],
+    pub area: f64,
+    pub moment_y: f64,
+    pub moment_z: f64,
+    pub torsional_constant: f64,
+    pub local_y_direction: [f64; 3],
+}
+
+impl<'a> Element for Beam3D<'a> {
+    fn spatial_dimension(&self) -> usize {
+        3
+    }
+
+    fn node_count(&self) -> usize {
+        2
+    }
+
+    fn nodes(&self) -> &[NodeId] {
+        self.nodes
+    }
+
+    fn active_fields(&self) -> Vec<String> {
+        vec![
+            "ux".to_string(),
+            "uy".to_string(),
+            "uz".to_string(),
+            "theta_x".to_string(),
+            "theta_y".to_string(),
+            "theta_z".to_string(),
+        ]
+    }
+
+    fn local_stiffness(
+        &self,
+        node_coords: &[Point3],
+        properties: &BTreeMap<String, f64>,
+    ) -> Result<Vec<Vec<f64>>, ElementError> {
+        let young_modulus = *properties
+            .get("young_modulus")
+            .ok_or_else(|| ElementError::MissingProperty("young_modulus".to_string()))?;
+        let poisson_ratio = *properties
+            .get("poisson_ratio")
+            .ok_or_else(|| ElementError::MissingProperty("poisson_ratio".to_string()))?;
+
+        if node_coords.len() != 2 {
+            return Err(ElementError::InvalidNodeCount {
+                expected: 2,
+                actual: node_coords.len(),
+            });
+        }
+
+        let a = node_coords[0].coords;
+        let b = node_coords[1].coords;
+
+        let dx = b[0] - a[0];
+        let dy = b[1] - a[1];
+        let dz = b[2] - a[2];
+        let length = (dx.powi(2) + dy.powi(2) + dz.powi(2)).sqrt();
+        if length <= f64::EPSILON {
+            return Err(ElementError::DegenerateGeometry);
+        }
+
+        let ex = [dx / length, dy / length, dz / length];
+        let v_aux = self.local_y_direction;
+
+        let mut vz = [
+            ex[1] * v_aux[2] - ex[2] * v_aux[1],
+            ex[2] * v_aux[0] - ex[0] * v_aux[2],
+            ex[0] * v_aux[1] - ex[1] * v_aux[0],
+        ];
+        let mut len_z = (vz[0].powi(2) + vz[1].powi(2) + vz[2].powi(2)).sqrt();
+        if len_z <= 1e-6 {
+            let alt_aux = if ex[0].abs() > 0.9 {
+                [0.0, 1.0, 0.0]
+            } else {
+                [1.0, 0.0, 0.0]
+            };
+            vz = [
+                ex[1] * alt_aux[2] - ex[2] * alt_aux[1],
+                ex[2] * alt_aux[0] - ex[0] * alt_aux[2],
+                ex[0] * alt_aux[1] - ex[1] * alt_aux[0],
+            ];
+            len_z = (vz[0].powi(2) + vz[1].powi(2) + vz[2].powi(2)).sqrt();
+        }
+        let ez = [vz[0] / len_z, vz[1] / len_z, vz[2] / len_z];
+        let ey = [
+            ez[1] * ex[2] - ez[2] * ex[1],
+            ez[2] * ex[0] - ez[0] * ex[2],
+            ez[0] * ex[1] - ez[1] * ex[0],
+        ];
+
+        let shear_modulus = young_modulus / (2.0 * (1.0 + poisson_ratio));
+
+        let k_axial = self.area * young_modulus / length;
+        let k_torsion = self.torsional_constant * shear_modulus / length;
+
+        let val_az = 12.0 * young_modulus * self.moment_z / length.powi(3);
+        let val_bz = 6.0 * young_modulus * self.moment_z / length.powi(2);
+        let val_rot1z = 4.0 * young_modulus * self.moment_z / length;
+        let val_rot2z = 2.0 * young_modulus * self.moment_z / length;
+
+        let val_ay = 12.0 * young_modulus * self.moment_y / length.powi(3);
+        let val_by = 6.0 * young_modulus * self.moment_y / length.powi(2);
+        let val_rot1y = 4.0 * young_modulus * self.moment_y / length;
+        let val_rot2y = 2.0 * young_modulus * self.moment_y / length;
+
+        let mut k_local = vec![vec![0.0; 12]; 12];
+
+        // Axial
+        k_local[0][0] = k_axial;
+        k_local[0][6] = -k_axial;
+        k_local[6][0] = -k_axial;
+        k_local[6][6] = k_axial;
+
+        // Torsion
+        k_local[3][3] = k_torsion;
+        k_local[3][9] = -k_torsion;
+        k_local[9][3] = -k_torsion;
+        k_local[9][9] = k_torsion;
+
+        // Bending z (in x-y plane)
+        k_local[1][1] = val_az;
+        k_local[1][5] = val_bz;
+        k_local[1][7] = -val_az;
+        k_local[1][11] = val_bz;
+
+        k_local[5][1] = val_bz;
+        k_local[5][5] = val_rot1z;
+        k_local[5][7] = -val_bz;
+        k_local[5][11] = val_rot2z;
+
+        k_local[7][1] = -val_az;
+        k_local[7][5] = -val_bz;
+        k_local[7][7] = val_az;
+        k_local[7][11] = -val_bz;
+
+        k_local[11][1] = val_bz;
+        k_local[11][5] = val_rot2z;
+        k_local[11][7] = -val_bz;
+        k_local[11][11] = val_rot1z;
+
+        // Bending y (in x-z plane)
+        k_local[2][2] = val_ay;
+        k_local[2][4] = -val_by;
+        k_local[2][8] = -val_ay;
+        k_local[2][10] = -val_by;
+
+        k_local[4][2] = -val_by;
+        k_local[4][4] = val_rot1y;
+        k_local[4][8] = val_by;
+        k_local[4][10] = val_rot2y;
+
+        k_local[8][2] = -val_ay;
+        k_local[8][4] = val_by;
+        k_local[8][8] = val_ay;
+        k_local[8][10] = val_by;
+
+        k_local[10][2] = -val_by;
+        k_local[10][4] = val_rot2y;
+        k_local[10][8] = val_by;
+        k_local[10][10] = val_rot1y;
+
+        let transform = vec![
+            vec![
+                ex[0], ex[1], ex[2], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ],
+            vec![
+                ey[0], ey[1], ey[2], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ],
+            vec![
+                ez[0], ez[1], ez[2], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ],
+            vec![
+                0.0, 0.0, 0.0, ex[0], ex[1], ex[2], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ],
+            vec![
+                0.0, 0.0, 0.0, ey[0], ey[1], ey[2], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ],
+            vec![
+                0.0, 0.0, 0.0, ez[0], ez[1], ez[2], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ],
+            vec![
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ex[0], ex[1], ex[2], 0.0, 0.0, 0.0,
+            ],
+            vec![
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ey[0], ey[1], ey[2], 0.0, 0.0, 0.0,
+            ],
+            vec![
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ez[0], ez[1], ez[2], 0.0, 0.0, 0.0,
+            ],
+            vec![
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ex[0], ex[1], ex[2],
+            ],
+            vec![
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ey[0], ey[1], ey[2],
+            ],
+            vec![
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ez[0], ez[1], ez[2],
+            ],
+        ];
+
+        let trans_t = mat_transpose(&transform);
+        let temp = mat_mul(&k_local, &transform);
+        let k_global = mat_mul(&trans_t, &temp);
+
+        Ok(k_global)
+    }
+
+    fn local_mass(
+        &self,
+        node_coords: &[Point3],
+        density: f64,
+        lumped: bool,
+    ) -> Result<Vec<Vec<f64>>, ElementError> {
+        if node_coords.len() != 2 {
+            return Err(ElementError::InvalidNodeCount {
+                expected: 2,
+                actual: node_coords.len(),
+            });
+        }
+
+        let a = node_coords[0].coords;
+        let b = node_coords[1].coords;
+
+        let dx = b[0] - a[0];
+        let dy = b[1] - a[1];
+        let dz = b[2] - a[2];
+        let length = (dx.powi(2) + dy.powi(2) + dz.powi(2)).sqrt();
+        if length <= f64::EPSILON {
+            return Err(ElementError::DegenerateGeometry);
+        }
+
+        let ex = [dx / length, dy / length, dz / length];
+        let v_aux = self.local_y_direction;
+
+        let mut vz = [
+            ex[1] * v_aux[2] - ex[2] * v_aux[1],
+            ex[2] * v_aux[0] - ex[0] * v_aux[2],
+            ex[0] * v_aux[1] - ex[1] * v_aux[0],
+        ];
+        let mut len_z = (vz[0].powi(2) + vz[1].powi(2) + vz[2].powi(2)).sqrt();
+        if len_z <= 1e-6 {
+            let alt_aux = if ex[0].abs() > 0.9 {
+                [0.0, 1.0, 0.0]
+            } else {
+                [1.0, 0.0, 0.0]
+            };
+            vz = [
+                ex[1] * alt_aux[2] - ex[2] * alt_aux[1],
+                ex[2] * alt_aux[0] - ex[0] * alt_aux[2],
+                ex[0] * alt_aux[1] - ex[1] * alt_aux[0],
+            ];
+            len_z = (vz[0].powi(2) + vz[1].powi(2) + vz[2].powi(2)).sqrt();
+        }
+        let ez = [vz[0] / len_z, vz[1] / len_z, vz[2] / len_z];
+        let ey = [
+            ez[1] * ex[2] - ez[2] * ex[1],
+            ez[2] * ex[0] - ez[0] * ex[2],
+            ez[0] * ex[1] - ez[1] * ex[0],
+        ];
+
+        let transform = vec![
+            vec![
+                ex[0], ex[1], ex[2], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ],
+            vec![
+                ey[0], ey[1], ey[2], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ],
+            vec![
+                ez[0], ez[1], ez[2], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ],
+            vec![
+                0.0, 0.0, 0.0, ex[0], ex[1], ex[2], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ],
+            vec![
+                0.0, 0.0, 0.0, ey[0], ey[1], ey[2], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ],
+            vec![
+                0.0, 0.0, 0.0, ez[0], ez[1], ez[2], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ],
+            vec![
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ex[0], ex[1], ex[2], 0.0, 0.0, 0.0,
+            ],
+            vec![
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ey[0], ey[1], ey[2], 0.0, 0.0, 0.0,
+            ],
+            vec![
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ez[0], ez[1], ez[2], 0.0, 0.0, 0.0,
+            ],
+            vec![
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ex[0], ex[1], ex[2],
+            ],
+            vec![
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ey[0], ey[1], ey[2],
+            ],
+            vec![
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ez[0], ez[1], ez[2],
+            ],
+        ];
+
+        let trans_t = mat_transpose(&transform);
+
+        let m_local = if lumped {
+            let m_trans = density * self.area * length * 0.5;
+            let m_rot_x = density * (self.moment_y + self.moment_z) * length * 0.5;
+            let m_rot_yz = density * self.area * length.powi(3) / 24.0;
+            let mut m = vec![vec![0.0; 12]; 12];
+            for i in 0..2 {
+                let offset = 6 * i;
+                m[offset + 0][offset + 0] = m_trans;
+                m[offset + 1][offset + 1] = m_trans;
+                m[offset + 2][offset + 2] = m_trans;
+                m[offset + 3][offset + 3] = m_rot_x;
+                m[offset + 4][offset + 4] = m_rot_yz;
+                m[offset + 5][offset + 5] = m_rot_yz;
+            }
+            m
+        } else {
+            let mut m = vec![vec![0.0; 12]; 12];
+            let m_axial = density * self.area * length / 6.0;
+            let m_torsion = density * (self.moment_y + self.moment_z) * length / 6.0;
+            let m_bend_z = density * self.area * length / 420.0;
+            let m_bend_y = density * self.area * length / 420.0;
+
+            // Axial
+            m[0][0] = 2.0 * m_axial;
+            m[0][6] = m_axial;
+            m[6][0] = m_axial;
+            m[6][6] = 2.0 * m_axial;
+
+            // Torsion
+            m[3][3] = 2.0 * m_torsion;
+            m[3][9] = m_torsion;
+            m[9][3] = m_torsion;
+            m[9][9] = 2.0 * m_torsion;
+
+            // Bending z (in x-y plane: DOFs uy (1), theta_z (5))
+            m[1][1] = 156.0 * m_bend_z;
+            m[1][5] = 22.0 * length * m_bend_z;
+            m[1][7] = 54.0 * m_bend_z;
+            m[1][11] = -13.0 * length * m_bend_z;
+
+            m[5][1] = 22.0 * length * m_bend_z;
+            m[5][5] = 4.0 * length.powi(2) * m_bend_z;
+            m[5][7] = 13.0 * length * m_bend_z;
+            m[5][11] = -3.0 * length.powi(2) * m_bend_z;
+
+            m[7][1] = 54.0 * m_bend_z;
+            m[7][5] = 13.0 * length * m_bend_z;
+            m[7][7] = 156.0 * m_bend_z;
+            m[7][11] = -22.0 * length * m_bend_z;
+
+            m[11][1] = -13.0 * length * m_bend_z;
+            m[11][5] = -3.0 * length.powi(2) * m_bend_z;
+            m[11][7] = -22.0 * length * m_bend_z;
+            m[11][11] = 4.0 * length.powi(2) * m_bend_z;
+
+            // Bending y (in x-z plane: DOFs uz (2), theta_y (4))
+            m[2][2] = 156.0 * m_bend_y;
+            m[2][4] = -22.0 * length * m_bend_y;
+            m[2][8] = 54.0 * m_bend_y;
+            m[2][10] = 13.0 * length * m_bend_y;
+
+            m[4][2] = -22.0 * length * m_bend_y;
+            m[4][4] = 4.0 * length.powi(2) * m_bend_y;
+            m[4][8] = -13.0 * length * m_bend_y;
+            m[4][10] = -3.0 * length.powi(2) * m_bend_y;
+
+            m[8][2] = 54.0 * m_bend_y;
+            m[8][4] = -13.0 * length * m_bend_y;
+            m[8][8] = 156.0 * m_bend_y;
+            m[8][10] = 22.0 * length * m_bend_y;
+
+            m[10][2] = 13.0 * length * m_bend_y;
+            m[10][4] = -3.0 * length.powi(2) * m_bend_y;
+            m[10][8] = 22.0 * length * m_bend_y;
+            m[10][10] = 4.0 * length.powi(2) * m_bend_y;
+
+            m
+        };
+
+        let temp = mat_mul(&m_local, &transform);
+        let m_global = mat_mul(&trans_t, &temp);
+
+        Ok(m_global)
+    }
+}
+
 fn mat_mul(a: &[Vec<f64>], b: &[Vec<f64>]) -> Vec<Vec<f64>> {
     let rows = a.len();
     let cols = b[0].len();
