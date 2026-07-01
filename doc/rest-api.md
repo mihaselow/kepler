@@ -97,6 +97,75 @@ Errors return HTTP `400` with a JSON body:
 }
 ```
 
+### `POST /solve/elasticity`
+
+Solves a 2D linear elasticity problem on a `Tri3` mesh. Request shape:
+
+```json
+{
+  "mesh": { "points": [...], "triangles": [...] },
+  "problem": {
+    "material": { "young_modulus": 200000.0, "poisson_ratio": 0.3, "model": "plane_stress" },
+    "thickness": 1.0,
+    "constraints": [{ "node": 0, "component": "x", "value": 0.0 }],
+    "forces": [{ "node": 1, "component": "x", "value": 100.0 }]
+  },
+  "solver_options": { "backend": "conjugate_gradient", "preconditioner": "none" }
+}
+```
+
+Response matches the vector solve envelope used by Poisson (`values`, `iterations`, `residual_norm`, `diagnostics`).
+
+### `POST /solve/heat`
+
+Solves steady 2D heat transfer on a `Tri3` mesh:
+
+```json
+{
+  "mesh": { "points": [...], "triangles": [...] },
+  "problem": {
+    "thermal_conductivity": 1.0,
+    "source_constant": 0.0,
+    "dirichlet": [{ "node": 0, "value": 0.0 }]
+  }
+}
+```
+
+### `POST /solve/modal`
+
+Computes natural frequencies for a 2D elasticity model:
+
+```json
+{
+  "mesh": { "points": [...], "triangles": [...] },
+  "problem": {
+    "material": { "young_modulus": 200000.0, "poisson_ratio": 0.3, "model": "plane_stress" },
+    "thickness": 1.0,
+    "density": 7800.0,
+    "requested_modes": 3,
+    "constraints": [{ "node": 0, "component": "x", "value": 0.0 }]
+  }
+}
+```
+
+Returned `values` are mode frequencies in Hz.
+
+### `POST /solve/diffusion`
+
+Solves a 2D diffusion-reaction problem:
+
+```json
+{
+  "mesh": { "points": [...], "triangles": [...] },
+  "problem": {
+    "diffusivity": 1.0,
+    "reaction_rate": 0.0,
+    "source_constant": 0.0,
+    "dirichlet": [{ "node": 0, "value": 0.0 }]
+  }
+}
+```
+
 ### `POST /projects/validate`
 
 Validates a versioned project file without solving it. The body uses a stable envelope:
@@ -165,7 +234,7 @@ A valid project returns:
 
 Runs all jobs in a v1 project synchronously. The request body uses the same `{ "project": ... }` envelope as `/projects/validate`.
 
-The current implementation supports small synchronous Poisson jobs only. A successful response is also envelope-shaped:
+Supported project physics kinds include `poisson`, `elasticity`, `elasticity_3d`, `modal`, `modal_3d`, `structural`, `nonlinear_elasticity`, and `contact`.
 
 ```json
 {

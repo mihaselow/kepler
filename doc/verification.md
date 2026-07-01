@@ -55,6 +55,7 @@ Physics verification tests:
 - `tests/elasticity.rs`
 - `tests/elasticity_3d.rs`
 - `tests/contact.rs`
+- `tests/nonlinear_plasticity.rs`
 - `tests/thermal_struct.rs`
 - `tests/modal.rs`
 - `tests/structural_verification.rs`
@@ -73,6 +74,7 @@ I/O and workflow tests:
 - `tests/cli_cad.rs`
 - `tests/project_workflow.rs`
 - `tests/cli_project.rs`
+- `tests/abaqus_import.rs`
 - `tests/benchmarks.rs`
 - `tests/verification_manifest.rs`
 - `src/bin/server.rs` unit tests for REST workflows
@@ -93,6 +95,7 @@ Current checked-in fixtures:
 - `examples/data/rest_project_solve_response.json`
 - `examples/data/rest_bad_schema_error_response.json`
 - `examples/data/rest_mesh_artifact_upload.json`
+- `examples/data/block.inp`
 
 These fixtures cover the legacy mesh/params path, the v1 project workflow path, Gmsh import, VTK export, compact solution output, CLI project inspection, REST project validation/solve envelopes, REST error schema stability, and artifact uploads.
 
@@ -103,10 +106,11 @@ These fixtures cover the legacy mesh/params path, the v1 project workflow path, 
 - Heat: steady 2D/3D and transient 2D theta integration.
 - Diffusion-reaction: 2D/3D reaction matrices and transient 2D/3D theta integration.
 - Electrostatics: 2D/3D steady/quasi-static scalar potential and formulation marker.
-- Elasticity: 2D/3D stiffness symmetry, rigid translations, constrained solves, affine displacement constraints, transient Newmark dynamics.
+- Elasticity: 2D/3D stiffness symmetry, rigid translations, constrained solves, affine displacement constraints, transient Newmark and HHT-alpha dynamics, explicit central-difference dynamics.
+- Nonlinear: J2 plasticity block compression, nonlinear continuum Newton solves, frictionless contact.
 - Modal analysis: 2D/3D sorted modes, density validation, constrained model validation, one-DOF frequency references.
-- Solver stack: CG, GMRES, dense direct, Jacobi preconditioning, diagnostics, Newton, theta transient, Newmark transient.
-- Import/export: legacy mesh/params/solution, golden solution output, Gmsh physical groups, VTK scalar output, external CAD-to-Gmsh command planning, and CLI CAD plan/run workflows.
+- Solver stack: CG, GMRES, dense direct, Jacobi preconditioning, diagnostics, Newton, theta transient, Newmark transient, HHT-alpha transient.
+- Import/export: legacy mesh/params/solution, golden solution output, Gmsh physical groups, VTK scalar output, Abaqus INP import, JSON/HDF5 result files, external CAD-to-Gmsh command planning, and CLI CAD plan/run workflows.
 - Project workflows: v1 project parsing/validation, CLI validation/inspection golden output, REST validation/solve golden envelopes, async jobs, artifact upload/download fixtures, and stable error schemas.
 - Benchmarks: ignored benchmark-style tests cover Poisson assembly, Poisson solve, Gmsh import, VTK export, project parse/validate/adapt, and REST project validate/solve workflows.
 

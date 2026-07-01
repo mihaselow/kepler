@@ -22,6 +22,7 @@ const REQUIRED_TESTS: &[&str] = &[
     "tests/elasticity.rs",
     "tests/elasticity_3d.rs",
     "tests/contact.rs",
+    "tests/nonlinear_plasticity.rs",
     "tests/thermal_struct.rs",
     "tests/modal.rs",
     "tests/structural_verification.rs",
@@ -34,6 +35,7 @@ const REQUIRED_TESTS: &[&str] = &[
     "tests/cli_cad.rs",
     "tests/project_workflow.rs",
     "tests/cli_project.rs",
+    "tests/abaqus_import.rs",
     "tests/benchmarks.rs",
     "tests/verification_manifest.rs",
     "src/bin/server.rs",
@@ -52,6 +54,7 @@ const REQUIRED_FIXTURES: &[&str] = &[
     "examples/data/rest_project_solve_response.json",
     "examples/data/rest_bad_schema_error_response.json",
     "examples/data/rest_mesh_artifact_upload.json",
+    "examples/data/block.inp",
 ];
 
 #[test]
