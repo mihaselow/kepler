@@ -19,6 +19,11 @@ pub use fem::cms::{CraigBamptonReduction, reduce_craig_bampton};
 pub use fem::constraint::{
     MPCConstraint, MPCTerm, apply_mpc_lagrange, apply_mpc_penalty, split_lagrange_solution,
 };
+pub use fem::contact::{
+    BoundarySegment, ContactPair, SpatialHashGrid2D, assemble_augmented_contact,
+    assemble_penalty_contact, evaluate_augmented_contact, evaluate_penalty_contact,
+    extract_boundary_segments,
+};
 pub use fem::diffusion_reaction::{
     DiffusionReactionError, DiffusionReactionProblem, DiffusionReactionProblem3D,
     DiffusionReactionResult, DiffusionReactionSolverResult, TransientDiffusionReactionProblem,
@@ -48,6 +53,8 @@ pub use fem::heat::{
     solve_steady_heat, solve_steady_heat_3d, solve_steady_heat_3d_with_solver,
     solve_steady_heat_with_solver, solve_transient_heat,
 };
+pub use fem::material::plasticity::J2PlasticMaterial;
+pub use fem::material::{MaterialModel, MaterialState};
 pub use fem::modal::{
     ModalError, ModalProblem, ModalProblem3D, ModalResult, ModalResult3D, ModeShape, ModeShape3D,
     solve_modal, solve_modal_3d,
@@ -57,19 +64,17 @@ pub use fem::nonlinear_continuum::{
     NonlinearContinuumAssembly, NonlinearContinuumResult, NonlinearContinuumSolverOptions,
     solve_nonlinear_continuum,
 };
-pub use fem::contact::{
-    BoundarySegment, SpatialHashGrid2D, extract_boundary_segments,
-    ContactPair, evaluate_penalty_contact, assemble_penalty_contact,
-    evaluate_augmented_contact, assemble_augmented_contact,
-};
-pub use fem::material::{MaterialModel, MaterialState};
-pub use fem::material::plasticity::J2PlasticMaterial;
 pub use fem::poisson::{
     PoissonProblem, PoissonProblem3D, PoissonResult, PoissonSolverResult, solve_poisson,
     solve_poisson_3d, solve_poisson_3d_with_solver, solve_poisson_with_solver,
 };
 pub use fem::quadrature::{integrate_line_boundary, integrate_triangle_boundary};
 pub use fem::structural::{Beam2D, Beam3D, ShellQuad4, ShellTri3, Truss};
+pub use fem::structural_solve::{
+    BeamSection, StructuralComponent, StructuralConstraint, StructuralError, StructuralForce,
+    StructuralMaterial, StructuralProblem, StructuralResult, dof_index_6, solve_structural,
+    solve_structural_with_solver,
+};
 pub use io::{
     FileIoError,
     cad::{
@@ -85,22 +90,21 @@ pub use io::{
         ProjectLinearSolverBackend, ProjectLinearSolverOptions, ProjectMesh, ProjectOutput,
         ProjectOutputFormat, ProjectPhysics, ProjectPoint2, ProjectPoissonProblem,
         ProjectPreconditionerKind, ProjectSource, ProjectTriangle, default_project_solver_options,
-        format_project, job_to_poisson, job_to_elasticity, job_to_elasticity_3d,
-        job_to_modal, job_to_modal_3d, parse_project_str, read_project_file, validate_job,
-        validate_project,
+        format_project, job_to_elasticity, job_to_elasticity_3d, job_to_modal, job_to_modal_3d,
+        job_to_poisson, parse_project_str, read_project_file, validate_job, validate_project,
     },
     solution::{format_solution, write_solution_file},
     vtk::{VtkScalarField, format_vtk_legacy, write_vtk_legacy_file},
 };
 pub use linalg::{
     ArcLengthSystem, ConfiguredLinearSolver, DiagonalDiagnostics, LanczosEigenResult, LinalgError,
-    LinearSolver, LinearSolverBackend, LinearSolverOptions, MatrixDiagnostics, NewmarkSolverOptions,
-    NewmarkStepResult, NonlinearSolverDiagnostics, NonlinearSolverOptions, NonlinearSolverResult,
-    NonlinearSystem, PreconditionerKind, RiksResult, RiksSolverOptions, RiksStepResult,
-    SolverDiagnostics, SolverOptions, SparsityStats, SpdHeuristics, SymmetryDiagnostics,
-    TransientSolverOptions, TransientStepResult, analyze_matrix, axpy, newton_solve, norm,
-    riks_solve, solve_harmonic_response, solve_lanczos_modes, solve_linear_system,
-    solve_linear_transient, solve_newmark_transient,
+    LinearSolver, LinearSolverBackend, LinearSolverOptions, MatrixDiagnostics,
+    NewmarkSolverOptions, NewmarkStepResult, NonlinearSolverDiagnostics, NonlinearSolverOptions,
+    NonlinearSolverResult, NonlinearSystem, PreconditionerKind, RiksResult, RiksSolverOptions,
+    RiksStepResult, SolverDiagnostics, SolverOptions, SparsityStats, SpdHeuristics,
+    SymmetryDiagnostics, TransientSolverOptions, TransientStepResult, analyze_matrix, axpy,
+    newton_solve, norm, riks_solve, solve_harmonic_response, solve_lanczos_modes,
+    solve_linear_system, solve_linear_transient, solve_newmark_transient,
 };
 pub use mesh::{
     Cell, CellId, ElementKind, EntityDimension, FacetId, FieldId, MaterialId, Mesh, MeshError,
