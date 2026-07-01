@@ -1,5 +1,5 @@
-use sprs::TriMat;
 use crate::fem::contact::penalty::ContactPair;
+use sprs::TriMat;
 
 /// Evaluates a single frictionless node-to-segment contact element using the augmented Lagrangian method.
 /// Returns (forces, stiffness, gap, updated_lambda_val) if in contact.
@@ -43,7 +43,14 @@ pub fn evaluate_augmented_contact(
     }
 
     // N vector: [n_cx, n_cy, n_m1x, n_m1y, n_m2x, n_m2y]
-    let n = [nx, ny, -(1.0 - xi) * nx, -(1.0 - xi) * ny, -xi * nx, -xi * ny];
+    let n = [
+        nx,
+        ny,
+        -(1.0 - xi) * nx,
+        -(1.0 - xi) * ny,
+        -xi * nx,
+        -xi * ny,
+    ];
 
     // Contact force: f = -trial_force * N
     let mut forces = [0.0; 6];
@@ -81,9 +88,18 @@ pub fn assemble_augmented_contact(
         let m1 = pair.segment_nodes[0];
         let m2 = pair.segment_nodes[1];
 
-        let x_c = [node_coords[c][0] + u[c * 2], node_coords[c][1] + u[c * 2 + 1]];
-        let x_m1 = [node_coords[m1][0] + u[m1 * 2], node_coords[m1][1] + u[m1 * 2 + 1]];
-        let x_m2 = [node_coords[m2][0] + u[m2 * 2], node_coords[m2][1] + u[m2 * 2 + 1]];
+        let x_c = [
+            node_coords[c][0] + u[c * 2],
+            node_coords[c][1] + u[c * 2 + 1],
+        ];
+        let x_m1 = [
+            node_coords[m1][0] + u[m1 * 2],
+            node_coords[m1][1] + u[m1 * 2 + 1],
+        ];
+        let x_m2 = [
+            node_coords[m2][0] + u[m2 * 2],
+            node_coords[m2][1] + u[m2 * 2 + 1],
+        ];
 
         let lambda_val = multipliers[idx];
 

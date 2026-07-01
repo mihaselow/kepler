@@ -54,6 +54,8 @@ Physics verification tests:
 - `tests/manufactured_scalar.rs`
 - `tests/elasticity.rs`
 - `tests/elasticity_3d.rs`
+- `tests/contact.rs`
+- `tests/thermal_struct.rs`
 - `tests/modal.rs`
 - `tests/structural_verification.rs`
 

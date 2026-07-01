@@ -46,7 +46,14 @@ pub fn evaluate_penalty_contact(
     }
 
     // N vector: [n_cx, n_cy, n_m1x, n_m1y, n_m2x, n_m2y]
-    let n = [nx, ny, -(1.0 - xi) * nx, -(1.0 - xi) * ny, -xi * nx, -xi * ny];
+    let n = [
+        nx,
+        ny,
+        -(1.0 - xi) * nx,
+        -(1.0 - xi) * ny,
+        -xi * nx,
+        -xi * ny,
+    ];
 
     // Contact force: f = -epsilon_N * gap * N
     let mut forces = [0.0; 6];
@@ -80,9 +87,18 @@ pub fn assemble_penalty_contact(
         let m1 = pair.segment_nodes[0];
         let m2 = pair.segment_nodes[1];
 
-        let x_c = [node_coords[c][0] + u[c * 2], node_coords[c][1] + u[c * 2 + 1]];
-        let x_m1 = [node_coords[m1][0] + u[m1 * 2], node_coords[m1][1] + u[m1 * 2 + 1]];
-        let x_m2 = [node_coords[m2][0] + u[m2 * 2], node_coords[m2][1] + u[m2 * 2 + 1]];
+        let x_c = [
+            node_coords[c][0] + u[c * 2],
+            node_coords[c][1] + u[c * 2 + 1],
+        ];
+        let x_m1 = [
+            node_coords[m1][0] + u[m1 * 2],
+            node_coords[m1][1] + u[m1 * 2 + 1],
+        ];
+        let x_m2 = [
+            node_coords[m2][0] + u[m2 * 2],
+            node_coords[m2][1] + u[m2 * 2 + 1],
+        ];
 
         if let Some((forces, stiffness, _)) = evaluate_penalty_contact(x_c, x_m1, x_m2, penalty) {
             let global_dofs = [c * 2, c * 2 + 1, m1 * 2, m1 * 2 + 1, m2 * 2, m2 * 2 + 1];

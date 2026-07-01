@@ -20,9 +20,10 @@ pub use fem::constraint::{
     MPCConstraint, MPCTerm, apply_mpc_lagrange, apply_mpc_penalty, split_lagrange_solution,
 };
 pub use fem::contact::{
-    BoundarySegment, ContactPair, SpatialHashGrid2D, assemble_augmented_contact,
-    assemble_penalty_contact, evaluate_augmented_contact, evaluate_penalty_contact,
-    extract_boundary_segments,
+    BoundarySegment, ContactPair, ContactProblem, ContactSolveError, ContactStaticAssembly,
+    ContactStaticResult, ContactStaticSolverOptions, SpatialHashGrid2D,
+    assemble_augmented_contact, assemble_penalty_contact, evaluate_augmented_contact,
+    evaluate_penalty_contact, extract_boundary_segments, find_contact_pairs, solve_contact_static,
 };
 pub use fem::diffusion_reaction::{
     DiffusionReactionError, DiffusionReactionProblem, DiffusionReactionProblem3D,
@@ -70,6 +71,10 @@ pub use fem::poisson::{
 };
 pub use fem::quadrature::{integrate_line_boundary, integrate_triangle_boundary};
 pub use fem::structural::{Beam2D, Beam3D, ShellQuad4, ShellTri3, Truss};
+pub use fem::thermal_struct::{
+    ThermoElasticError, ThermoElasticProblem, ThermoElasticResult, ThermoElasticStaggerOptions,
+    solve_thermoelastic,
+};
 pub use fem::structural_solve::{
     BeamSection, StructuralComponent, StructuralConstraint, StructuralError, StructuralForce,
     StructuralMaterial, StructuralProblem, StructuralResult, dof_index_6, solve_structural,

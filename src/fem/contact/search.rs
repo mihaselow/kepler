@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::mesh::{ElementKind, Mesh};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BoundarySegment {
@@ -17,11 +17,7 @@ pub fn extract_boundary_segments(mesh: &Mesh) -> Vec<BoundarySegment> {
                 let n1 = cell.nodes[1];
                 let n2 = cell.nodes[2];
 
-                let edges = [
-                    (n0, n1),
-                    (n1, n2),
-                    (n2, n0),
-                ];
+                let edges = [(n0, n1), (n1, n2), (n2, n0)];
                 for &(u, v) in &edges {
                     let key = if u < v { (u, v) } else { (v, u) };
                     *edge_counts.entry(key).or_insert(0) += 1;
@@ -33,12 +29,7 @@ pub fn extract_boundary_segments(mesh: &Mesh) -> Vec<BoundarySegment> {
                 let n2 = cell.nodes[2];
                 let n3 = cell.nodes[3];
 
-                let edges = [
-                    (n0, n1),
-                    (n1, n2),
-                    (n2, n3),
-                    (n3, n0),
-                ];
+                let edges = [(n0, n1), (n1, n2), (n2, n3), (n3, n0)];
                 for &(u, v) in &edges {
                     let key = if u < v { (u, v) } else { (v, u) };
                     *edge_counts.entry(key).or_insert(0) += 1;
@@ -51,7 +42,9 @@ pub fn extract_boundary_segments(mesh: &Mesh) -> Vec<BoundarySegment> {
     let mut boundary = Vec::new();
     for (key, count) in edge_counts {
         if count == 1 {
-            boundary.push(BoundarySegment { nodes: [key.0, key.1] });
+            boundary.push(BoundarySegment {
+                nodes: [key.0, key.1],
+            });
         }
     }
     boundary
@@ -93,7 +86,10 @@ impl SpatialHashGrid2D {
 
             for i in i_min..=i_max {
                 for j in j_min..=j_max {
-                    self.segment_buckets.entry((i, j)).or_insert_with(Vec::new).push(idx);
+                    self.segment_buckets
+                        .entry((i, j))
+                        .or_insert_with(Vec::new)
+                        .push(idx);
                 }
             }
         }
@@ -120,7 +116,7 @@ impl SpatialHashGrid2D {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mesh::{Point2, Cell};
+    use crate::mesh::{Cell, Point2};
 
     #[test]
     fn test_extract_boundary_segments() {
@@ -144,11 +140,14 @@ mod tests {
         // Shared edge (0,2) occurs twice, so it should not be in the boundary.
         assert_eq!(boundary.len(), 4);
 
-        let mut boundary_edges: Vec<_> = boundary.iter().map(|seg| {
-            let u = seg.nodes[0];
-            let v = seg.nodes[1];
-            if u < v { (u, v) } else { (v, u) }
-        }).collect();
+        let mut boundary_edges: Vec<_> = boundary
+            .iter()
+            .map(|seg| {
+                let u = seg.nodes[0];
+                let v = seg.nodes[1];
+                if u < v { (u, v) } else { (v, u) }
+            })
+            .collect();
         boundary_edges.sort();
 
         assert_eq!(boundary_edges, vec![(0, 1), (0, 3), (1, 2), (2, 3)]);
@@ -163,9 +162,7 @@ mod tests {
             Point2::new(0.0, 2.0),
         ];
 
-        let cells = vec![
-            Cell::new(ElementKind::Quad4, vec![0, 1, 2, 3]),
-        ];
+        let cells = vec![Cell::new(ElementKind::Quad4, vec![0, 1, 2, 3])];
 
         let mesh = Mesh::new_with_cells(points, cells).unwrap();
         let boundary = extract_boundary_segments(&mesh);
