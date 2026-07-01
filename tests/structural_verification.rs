@@ -1,12 +1,13 @@
 use std::f64::consts::PI;
 
 use kepler::{
-    Cell, DisplacementComponent, DisplacementComponent3D, DisplacementConstraint,
+    BeamSection, Cell, DisplacementComponent, DisplacementComponent3D, DisplacementConstraint,
     DisplacementConstraint3D, ElasticityMaterial, ElasticityMaterial3D, ElasticityModel,
     ElasticityProblem, ElasticityProblem3D, ElementKind, Mesh, MeshTopology, ModalProblem,
-    ModalProblem3D, Point2, PointD, SolverOptions, Tri3,
+    ModalProblem3D, Point2, Point3, PointD, SolverOptions, StructuralComponent,
+    StructuralConstraint, StructuralForce, StructuralMaterial, StructuralProblem, Tri3,
     fem::elasticity::{local_elasticity_stiffness, local_tet4_elasticity_stiffness},
-    solve_elasticity, solve_elasticity_3d, solve_modal, solve_modal_3d,
+    solve_elasticity, solve_elasticity_3d, solve_modal, solve_modal_3d, solve_structural,
 };
 
 const EPS: f64 = 1.0e-10;
@@ -372,4 +373,155 @@ fn test_beam_3d_element() {
     assert_matrix_vector_close_3d(k_arr, x_translation, [0.0; 12]);
     assert_matrix_vector_close_3d(k_arr, y_translation, [0.0; 12]);
     assert_matrix_vector_close_3d(k_arr, z_translation, [0.0; 12]);
+}
+
+fn fixed_structural_node(node: usize) -> Vec<StructuralConstraint> {
+    [
+        StructuralComponent::Ux,
+        StructuralComponent::Uy,
+        StructuralComponent::Uz,
+        StructuralComponent::ThetaX,
+        StructuralComponent::ThetaY,
+        StructuralComponent::ThetaZ,
+    ]
+    .into_iter()
+    .map(|component| StructuralConstraint {
+        node,
+        component,
+        value: 0.0,
+    })
+    .collect()
+}
+
+#[test]
+fn structural_cantilever_beam_tip_deflection_matches_euler_bernoulli() {
+    let length = 10.0;
+    let young_modulus = 200e9;
+    let moment_z = 1.0e-4;
+    let force = 1_000.0;
+
+    let mesh = MeshTopology::new(
+        vec![
+            Point3::new([0.0, 0.0, 0.0]),
+            Point3::new([length, 0.0, 0.0]),
+        ],
+        vec![Cell::new(ElementKind::Line2, vec![0, 1])],
+    )
+    .unwrap();
+
+    let problem = StructuralProblem {
+        material: StructuralMaterial {
+            young_modulus,
+            poisson_ratio: 0.3,
+        },
+        beam_section: BeamSection {
+            area: 0.01,
+            moment_y: 1.0e-5,
+            moment_z,
+            torsional_constant: 3.0e-5,
+            local_y_direction: [0.0, 1.0, 0.0],
+        },
+        shell_thickness: 0.1,
+        constraints: fixed_structural_node(0),
+        forces: vec![StructuralForce {
+            node: 1,
+            component: StructuralComponent::Uy,
+            value: force,
+        }],
+    };
+
+    let result = solve_structural(&mesh, &problem, SolverOptions::default()).unwrap();
+    let expected = force * length.powi(3) / (3.0 * young_modulus * moment_z);
+    assert_close(result.displacements[1][1], expected);
+}
+
+#[test]
+fn structural_scordelis_lo_roof_crown_deflects_downward() {
+    // Coarse Scordelis-Lo-style cylindrical roof patch (R=25 ft, 40 deg arc, t=0.25 ft).
+    // Reference crown displacement for the full benchmark is ~0.3024 in under self-weight;
+    // this coarse 2x2 Quad4 mesh checks downward crown motion and reasonable magnitude.
+    let radius = 25.0 * 0.3048; // ft to m
+    let thickness = 0.25 * 0.3048;
+    let length = 25.0 * 0.3048; // quarter-model half-length
+    let young_modulus = 4.32e8 * 6894.76; // psi to Pa
+    let density = 0.2086 * 27679.9;
+
+    let angles = [0.0_f64, 20.0_f64.to_radians(), 40.0_f64.to_radians()];
+    let x_coords = [0.0, length];
+    let mut points = Vec::new();
+    for &x in &x_coords {
+        for &theta in &angles {
+            let y = radius * theta.sin();
+            let z = radius * (1.0 - theta.cos());
+            points.push(Point3::new([x, y, z]));
+        }
+    }
+
+    let node = |ix: usize, itheta: usize| ix * angles.len() + itheta;
+    let cells = vec![
+        Cell::new(
+            ElementKind::Quad4,
+            vec![node(0, 0), node(1, 0), node(1, 1), node(0, 1)],
+        ),
+        Cell::new(
+            ElementKind::Quad4,
+            vec![node(0, 1), node(1, 1), node(1, 2), node(0, 2)],
+        ),
+    ];
+
+    let mesh = MeshTopology::new(points, cells).unwrap();
+    let crown_node = node(0, 1);
+
+    let mut constraints = Vec::new();
+    // Built-in edge at theta = 0.
+    for &n in &[node(0, 0), node(1, 0)] {
+        constraints.extend(fixed_structural_node(n));
+    }
+    // Symmetry plane at x = 0.
+    for itheta in 1..angles.len() {
+        constraints.push(StructuralConstraint {
+            node: node(0, itheta),
+            component: StructuralComponent::Ux,
+            value: 0.0,
+        });
+    }
+
+    let elem_area = radius * (angles[2] - angles[0]) * length / 2.0;
+    let weight_per_node = density * thickness * elem_area / 4.0;
+    let mut forces = Vec::new();
+    for ix in 0..x_coords.len() {
+        for itheta in 1..angles.len() {
+            forces.push(StructuralForce {
+                node: node(ix, itheta),
+                component: StructuralComponent::Uz,
+                value: -weight_per_node,
+            });
+        }
+    }
+
+    let problem = StructuralProblem {
+        material: StructuralMaterial {
+            young_modulus,
+            poisson_ratio: 0.0,
+        },
+        beam_section: BeamSection::default(),
+        shell_thickness: thickness,
+        constraints,
+        forces,
+    };
+
+    let result = solve_structural(&mesh, &problem, SolverOptions::default()).unwrap();
+    let crown_uz = result.displacements[crown_node][2];
+    assert!(
+        crown_uz < 0.0,
+        "crown should deflect downward, got uz={crown_uz}"
+    );
+    assert!(
+        crown_uz.abs() > 1.0e-9,
+        "crown deflection should be non-trivial"
+    );
+    assert!(
+        crown_uz.abs() < 0.05,
+        "crown deflection magnitude unreasonable: {crown_uz}"
+    );
 }
