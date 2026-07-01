@@ -60,6 +60,7 @@ pub use fem::nonlinear_continuum::{
 pub use fem::contact::{
     BoundarySegment, SpatialHashGrid2D, extract_boundary_segments,
     ContactPair, evaluate_penalty_contact, assemble_penalty_contact,
+    evaluate_augmented_contact, assemble_augmented_contact,
 };
 pub use fem::material::{MaterialModel, MaterialState};
 pub use fem::material::plasticity::J2PlasticMaterial;
