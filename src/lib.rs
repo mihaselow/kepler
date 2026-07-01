@@ -57,6 +57,7 @@ pub use fem::nonlinear_continuum::{
     NonlinearContinuumAssembly, NonlinearContinuumResult, NonlinearContinuumSolverOptions,
     solve_nonlinear_continuum,
 };
+pub use fem::contact::{BoundarySegment, SpatialHashGrid2D, extract_boundary_segments};
 pub use fem::material::{MaterialModel, MaterialState};
 pub use fem::material::plasticity::J2PlasticMaterial;
 pub use fem::poisson::{

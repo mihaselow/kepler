@@ -14,4 +14,6 @@ pub mod quadrature;
 pub mod structural;
 pub mod material;
 pub mod nonlinear_continuum;
+pub mod contact;
+
 
