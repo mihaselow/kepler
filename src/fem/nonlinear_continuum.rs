@@ -2,8 +2,14 @@ use std::sync::Arc;
 use sprs::{CsMat, TriMat};
 
 use crate::{
-    fem::material::{MaterialModel, MaterialState},
-    linalg::{LinalgError, LinearSolverOptions, solve_linear_system, norm, axpy},
+    fem::{
+        contact::{
+            penalty::assemble_penalty_contact,
+            solve::{find_contact_pairs, ContactProblem},
+        },
+        material::{MaterialModel, MaterialState},
+    },
+    linalg::{LinalgError, LinearSolverOptions, axpy, norm, solve_linear_system},
     mesh::{ElementKind, Mesh},
 };
 
@@ -14,6 +20,7 @@ pub struct NonlinearContinuumAssembly {
     pub material: Arc<dyn MaterialModel>,
     pub external_forces: Vec<(usize, usize, f64)>, // (node, component, val)
     pub dirichlet_boundary: Vec<(usize, usize, f64)>, // (node, component, val)
+    pub contact: Option<ContactProblem>,
     pub num_dofs: usize,
 }
 
@@ -543,7 +550,50 @@ pub fn solve_nonlinear_continuum(
         let mut _states_iter = states_converged.clone();
 
         for _iter in 1..=options.max_iterations {
-            let (f_int, kt, states_next) = assembly.evaluate_system(&u_iter, &states_converged);
+            let (mut f_int, mut kt, states_next) = assembly.evaluate_system(&u_iter, &states_converged);
+
+            if let Some(contact) = &assembly.contact {
+                let pairs = find_contact_pairs(
+                    &assembly.mesh,
+                    &contact.master_segments,
+                    &contact.slave_nodes,
+                    &u_iter,
+                );
+                let ref_coords: Vec<[f64; 2]> = assembly
+                    .mesh
+                    .points()
+                    .iter()
+                    .map(|p| [p.x, p.y])
+                    .collect();
+                let bc_set: std::collections::BTreeSet<usize> = assembly
+                    .dirichlet_boundary
+                    .iter()
+                    .map(|&(node, comp, _)| node * 2 + comp)
+                    .collect();
+                let mut f_contact = vec![0.0; n];
+                let mut contact_tri = TriMat::new((n, n));
+                assemble_penalty_contact(
+                    &ref_coords,
+                    &u_iter,
+                    &pairs,
+                    contact.penalty,
+                    &mut f_contact,
+                    &mut contact_tri,
+                    &bc_set,
+                );
+                for i in 0..n {
+                    f_int[i] -= f_contact[i];
+                }
+                let k_contact: CsMat<f64> = contact_tri.to_csr();
+                let mut merged = TriMat::new((n, n));
+                for (&val, (i, j)) in kt.iter() {
+                    merged.add_triplet(i, j, val);
+                }
+                for (&val, (i, j)) in k_contact.iter() {
+                    merged.add_triplet(i, j, val);
+                }
+                kt = merged.to_csr();
+            }
 
             let mut r = vec![0.0; n];
             for i in 0..n {
@@ -636,6 +686,7 @@ mod tests {
             material,
             external_forces,
             dirichlet_boundary,
+            contact: None,
             num_dofs: 8,
         };
 
