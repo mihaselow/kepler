@@ -1,0 +1,22 @@
+{
+  "description": "Slender 10:1 cantilever under tip shear (10x2 CPS4 mesh; Euler-Bernoulli reference with coarse-mesh tolerance)",
+  "thickness": 1.0,
+  "plane_stress": true,
+  "material": "STEEL",
+  "checks": [
+    {
+      "kind": "displacement_component",
+      "node": 10,
+      "component": "y",
+      "expected": -2.0e-5,
+      "tolerance_rel": 0.35
+    },
+    {
+      "kind": "displacement_component",
+      "node": 32,
+      "component": "y",
+      "expected": -2.0e-5,
+      "tolerance_rel": 0.35
+    }
+  ]
+}

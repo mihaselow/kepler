@@ -749,8 +749,8 @@ fn tridiagonal_eigen_with_vectors(alpha: &[f64], beta: &[f64]) -> (Vec<f64>, Vec
 
     // Accumulate Givens rotations in Q (n×n identity → eigenvector matrix).
     let mut q = vec![vec![0.0f64; n]; n];
-    for i in 0..n {
-        q[i][i] = 1.0;
+    for (i, row) in q.iter_mut().enumerate().take(n) {
+        row[i] = 1.0;
     }
 
     // Simple Jacobi-based symmetric tridiagonal QR (Francis double-shift is
@@ -760,9 +760,9 @@ fn tridiagonal_eigen_with_vectors(alpha: &[f64], beta: &[f64]) -> (Vec<f64>, Vec
         // Find largest sub-diagonal.
         let mut p = 0;
         let mut max_off = 0.0f64;
-        for i in 0..n - 1 {
-            if off[i].abs() > max_off {
-                max_off = off[i].abs();
+        for (i, off_i) in off.iter_mut().enumerate().take(n - 1) {
+            if off_i.abs() > max_off {
+                max_off = off_i.abs();
                 p = i;
             }
         }
@@ -796,10 +796,7 @@ fn tridiagonal_eigen_with_vectors(alpha: &[f64], beta: &[f64]) -> (Vec<f64>, Vec
 
         // Propagate rotation to adjacent off-diagonals.
         if p > 0 {
-            let prev = off[p - 1];
-            off[p - 1] = cos * prev - sin * 0.0; // q_{p-1,p+1} was 0
-            let _ = prev; // avoid unused warning
-            off[p - 1] = cos * off[p - 1];
+            off[p - 1] *= cos;
         }
         if q_idx < n - 1 {
             let next = off[q_idx];
@@ -1727,7 +1724,7 @@ fn add_three_scaled_matrices(
 enum Preconditioner {
     None,
     Jacobi(Vec<f64>),
-    Amg(AmgPreconditioner),
+    Amg(Box<AmgPreconditioner>),
 }
 
 struct AmgPreconditioner {
@@ -1760,14 +1757,14 @@ impl AmgPreconditioner {
         let r_c = mul_csr_vec(&self.pt_mat, &r_new);
 
         // 4. Coarse grid solve
-        if let Some(ref solver) = self.coarse_solver {
-            if r_c.len() > 0 {
-                let e_c = solver.solve(&r_c);
-                // 5. Prolongation: e = e + P * e_c
-                let e_fine = mul_csr_vec(&self.p_mat, &e_c);
-                for i in 0..n {
-                    e[i] += e_fine[i];
-                }
+        if let Some(solver) = &self.coarse_solver
+            && !r_c.is_empty()
+        {
+            let e_c = solver.solve(&r_c);
+            // 5. Prolongation: e = e + P * e_c
+            let e_fine = mul_csr_vec(&self.p_mat, &e_c);
+            for i in 0..n {
+                e[i] += e_fine[i];
             }
         }
 
@@ -1805,9 +1802,9 @@ fn build_preconditioner(
         PreconditionerKind::Amg => {
             let n_fine = matrix.rows();
             let mut inverse_diagonal = vec![0.0; n_fine];
-            for index in 0..n_fine {
+            for (index, inverse) in inverse_diagonal.iter_mut().enumerate().take(n_fine) {
                 let diagonal = matrix.get(index, index).copied().unwrap_or(0.0);
-                inverse_diagonal[index] = if diagonal.abs() > 1e-14 {
+                *inverse = if diagonal.abs() > 1e-14 {
                     1.0 / diagonal
                 } else {
                     1.0
@@ -1846,13 +1843,13 @@ fn build_preconditioner(
             let n_coarse = num_aggregates;
 
             if n_coarse == 0 || n_coarse >= n_fine {
-                return Ok(Preconditioner::Amg(AmgPreconditioner {
+                return Ok(Preconditioner::Amg(Box::new(AmgPreconditioner {
                     matrix: matrix.clone(),
                     p_mat: CsMat::new_csc((n_fine, 0), vec![0; 1], vec![], vec![]),
                     pt_mat: CsMat::new_csc((0, n_fine), vec![0; 1], vec![], vec![]),
                     coarse_solver: None,
                     inverse_diagonal,
-                }));
+                })));
             }
 
             let mut p_tri = TriMat::new((n_fine, n_coarse));
@@ -1870,18 +1867,15 @@ fn build_preconditioner(
             let a_coarse = &pt_mat * &ap;
 
             let ldl = sprs_ldl::Ldl::default();
-            let coarse_solver = match ldl.numeric(a_coarse.view()) {
-                Ok(solver) => Some(solver),
-                Err(_) => None,
-            };
+            let coarse_solver = ldl.numeric(a_coarse.view()).ok();
 
-            Ok(Preconditioner::Amg(AmgPreconditioner {
+            Ok(Preconditioner::Amg(Box::new(AmgPreconditioner {
                 matrix: matrix.clone(),
                 p_mat,
                 pt_mat,
                 coarse_solver,
                 inverse_diagonal,
-            }))
+            })))
         }
     }
 }
@@ -2099,11 +2093,7 @@ pub fn riks_solve<S: ArcLengthSystem>(
                 1.0
             } else {
                 let dot_prod = dot(&prev_du, &du_f);
-                if dot_prod >= 0.0 {
-                    1.0
-                } else {
-                    -1.0
-                }
+                if dot_prod >= 0.0 { 1.0 } else { -1.0 }
             };
 
             let delta_lambda = sign_dl * ds / du_f_norm;
@@ -2137,7 +2127,8 @@ pub fn riks_solve<S: ArcLengthSystem>(
                 };
 
                 // Solve K du_f = F_ext
-                let du_f_k = match solve_linear_system(&kt_k, &f_ext, options.linear_solver.clone()) {
+                let du_f_k = match solve_linear_system(&kt_k, &f_ext, options.linear_solver.clone())
+                {
                     Ok(res) => res.values,
                     Err(_) => {
                         converged_iter = None;

@@ -21,9 +21,9 @@ pub use fem::constraint::{
 };
 pub use fem::contact::{
     BoundarySegment, ContactPair, ContactProblem, ContactSolveError, ContactStaticAssembly,
-    ContactStaticResult, ContactStaticSolverOptions, SpatialHashGrid2D,
-    assemble_augmented_contact, assemble_penalty_contact, evaluate_augmented_contact,
-    evaluate_penalty_contact, extract_boundary_segments, find_contact_pairs, solve_contact_static,
+    ContactStaticResult, ContactStaticSolverOptions, SpatialHashGrid2D, assemble_augmented_contact,
+    assemble_penalty_contact, evaluate_augmented_contact, evaluate_penalty_contact,
+    extract_boundary_segments, find_contact_pairs, solve_contact_static,
 };
 pub use fem::diffusion_reaction::{
     DiffusionReactionError, DiffusionReactionProblem, DiffusionReactionProblem3D,
@@ -44,15 +44,15 @@ pub use fem::elasticity::{
     solve_elasticity_with_solver, solve_transient_elasticity, solve_transient_elasticity_3d,
     solve_transient_elasticity_hht,
 };
-pub use fem::explicit::{
-    ExplicitDynamicsError, ExplicitDynamicsOptions, ExplicitDynamicsProblem,
-    ExplicitDynamicsResult, ExplicitDynamicsStep, estimate_critical_time_step,
-    solve_explicit_dynamics,
-};
 pub use fem::electrostatics::{
     ELECTROSTATIC_FORMULATION, ElectricPotentialResult, ElectricPotentialSolverResult,
     ElectrostaticFormulation, ElectrostaticProblem, ElectrostaticProblem3D, solve_electrostatics,
     solve_electrostatics_3d, solve_electrostatics_3d_with_solver, solve_electrostatics_with_solver,
+};
+pub use fem::explicit::{
+    ExplicitDynamicsError, ExplicitDynamicsOptions, ExplicitDynamicsProblem,
+    ExplicitDynamicsResult, ExplicitDynamicsStep, estimate_critical_time_step,
+    solve_explicit_dynamics,
 };
 pub use fem::heat::{
     SteadyHeatProblem, SteadyHeatProblem3D, TemperatureResult, TemperatureSolverResult,
@@ -77,27 +77,29 @@ pub use fem::poisson::{
 };
 pub use fem::quadrature::{integrate_line_boundary, integrate_triangle_boundary};
 pub use fem::structural::{Beam2D, Beam3D, ShellQuad4, ShellTri3, Truss};
-pub use fem::thermal_struct::{
-    ThermoElasticError, ThermoElasticProblem, ThermoElasticResult, ThermoElasticStaggerOptions,
-    solve_thermoelastic,
-};
 pub use fem::structural_solve::{
     BeamSection, StructuralComponent, StructuralConstraint, StructuralError, StructuralForce,
     StructuralMaterial, StructuralProblem, StructuralResult, dof_index_6, solve_structural,
     solve_structural_with_solver,
 };
+pub use fem::thermal_struct::{
+    ThermoElasticError, ThermoElasticProblem, ThermoElasticResult, ThermoElasticStaggerOptions,
+    solve_thermoelastic,
+};
 pub use io::{
     FileIoError,
+    abaqus::{
+        AbaqusBoundary, AbaqusCload, AbaqusElement, AbaqusMaterial, AbaqusModel, AbaqusStep,
+        AbaqusVerifyCase, AbaqusVerifyCheck, abaqus_to_annotations, abaqus_to_elasticity_problem,
+        abaqus_to_mesh_2d, parse_abaqus_str, parse_abaqus_verify_str, read_abaqus_file,
+        read_abaqus_verify_case, verify_elasticity_against_case,
+    },
     cad::{
         CadFileFormat, CadLengthUnit, CadMeshOutputFormat, CadMeshingDimension, CadMeshingOptions,
         CadMeshingWorkflow, CadSource, CadWorkflowError, ExternalCommand, ExternalMesher,
         infer_cad_format, plan_cad_meshing_command, validate_cad_meshing_workflow,
     },
     gmsh::{ImportedMesh, parse_gmsh_str, read_gmsh_file},
-    abaqus::{
-        AbaqusBoundary, AbaqusElement, AbaqusMaterial, AbaqusModel, AbaqusStep, abaqus_to_annotations,
-        abaqus_to_mesh_2d, parse_abaqus_str, read_abaqus_file,
-    },
     mesh::{parse_mesh_str, read_mesh_file},
     params::{PoissonFileConfig, SourceConfig, parse_params_str, read_params_file},
     project::{
@@ -110,23 +112,23 @@ pub use io::{
         parse_project_str, read_project_file, validate_job, validate_project,
     },
     result_format::{
-        KeplerResultCell, KeplerResultFile, KeplerResultMesh, KeplerResultStep, ResultIoError,
-        RESULT_SCHEMA_VERSION, read_json_result, write_hdf5_result, write_json_result,
-        write_result_file,
+        KeplerResultCell, KeplerResultFile, KeplerResultMesh, KeplerResultStep,
+        RESULT_SCHEMA_VERSION, ResultIoError, read_json_result, write_hdf5_result,
+        write_json_result, write_result_file,
     },
     solution::{format_solution, write_solution_file},
     vtk::{VtkScalarField, format_vtk_legacy, write_vtk_legacy_file},
 };
 pub use linalg::{
     ArcLengthSystem, ConfiguredLinearSolver, DiagonalDiagnostics, HhtSolverOptions, HhtStepResult,
-    LanczosEigenResult, LinalgError,
-    LinearSolver, LinearSolverBackend, LinearSolverOptions, MatrixDiagnostics,
-    NewmarkSolverOptions, NewmarkStepResult, NonlinearSolverDiagnostics, NonlinearSolverOptions,
-    NonlinearSolverResult, NonlinearSystem, PreconditionerKind, RiksResult, RiksSolverOptions,
-    RiksStepResult, SolverDiagnostics, SolverOptions, SparsityStats, SpdHeuristics,
-    SymmetryDiagnostics, TransientSolverOptions, TransientStepResult, analyze_matrix, axpy,
-    newton_solve, norm, riks_solve, solve_harmonic_response, solve_lanczos_modes,
-    solve_linear_system, solve_linear_transient, solve_newmark_transient, solve_hht_transient,
+    LanczosEigenResult, LinalgError, LinearSolver, LinearSolverBackend, LinearSolverOptions,
+    MatrixDiagnostics, NewmarkSolverOptions, NewmarkStepResult, NonlinearSolverDiagnostics,
+    NonlinearSolverOptions, NonlinearSolverResult, NonlinearSystem, PreconditionerKind, RiksResult,
+    RiksSolverOptions, RiksStepResult, SolverDiagnostics, SolverOptions, SparsityStats,
+    SpdHeuristics, SymmetryDiagnostics, TransientSolverOptions, TransientStepResult,
+    analyze_matrix, axpy, newton_solve, norm, riks_solve, solve_harmonic_response,
+    solve_hht_transient, solve_lanczos_modes, solve_linear_system, solve_linear_transient,
+    solve_newmark_transient,
 };
 pub use mesh::{
     Cell, CellId, ElementKind, EntityDimension, FacetId, FieldId, MaterialId, Mesh, MeshError,

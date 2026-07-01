@@ -5,12 +5,14 @@ use crate::{
     fem::{
         contact::{
             augmented::assemble_augmented_contact,
-            penalty::{assemble_penalty_contact, ContactPair},
+            penalty::{ContactPair, assemble_penalty_contact},
             search::{BoundarySegment, SpatialHashGrid2D},
         },
-        elasticity::{assemble_elasticity_system, ElasticityError, ElasticityMaterial, ElasticityProblem},
+        elasticity::{
+            ElasticityError, ElasticityMaterial, ElasticityProblem, assemble_elasticity_system,
+        },
     },
-    linalg::{axpy, norm, solve_linear_system, LinalgError, LinearSolverOptions},
+    linalg::{LinalgError, LinearSolverOptions, axpy, norm, solve_linear_system},
     mesh::Mesh,
 };
 
@@ -72,10 +74,7 @@ pub enum ContactSolveError {
 }
 
 fn node_coords(mesh: &Mesh) -> Vec<[f64; 2]> {
-    mesh.points()
-        .iter()
-        .map(|p| [p.x, p.y])
-        .collect()
+    mesh.points().iter().map(|p| [p.x, p.y]).collect()
 }
 
 fn deformed_position(node_coords: &[[f64; 2]], u: &[f64], node: usize) -> [f64; 2] {
@@ -169,13 +168,7 @@ pub fn find_contact_pairs(
 
         let mut best: Option<(f64, BoundarySegment)> = None;
         for seg_idx in candidates {
-            best = best_contact_segment(
-                x_c,
-                &ref_coords,
-                u,
-                master_segments[seg_idx],
-                best,
-            );
+            best = best_contact_segment(x_c, &ref_coords, u, master_segments[seg_idx], best);
         }
 
         if best.is_none() {
@@ -203,7 +196,9 @@ fn mat_vec_mul(matrix: &CsMat<f64>, x: &[f64]) -> Vec<f64> {
     y
 }
 
-fn dirichlet_bc_set(dirichlet_boundary: &[(usize, usize, f64)]) -> std::collections::BTreeSet<usize> {
+fn dirichlet_bc_set(
+    dirichlet_boundary: &[(usize, usize, f64)],
+) -> std::collections::BTreeSet<usize> {
     let mut bc_set = std::collections::BTreeSet::new();
     for &(node, comp, _) in dirichlet_boundary {
         bc_set.insert(node * 2 + comp);
@@ -275,7 +270,9 @@ impl ContactStaticAssembly {
                     let x_c = deformed_position(&ref_coords, u, c);
                     let x_m1 = deformed_position(&ref_coords, u, m1);
                     let x_m2 = deformed_position(&ref_coords, u, m2);
-                    segment_normal_gap(x_c, x_m1, x_m2).filter(|gap| *gap < 0.0).map(|gap| -gap)
+                    segment_normal_gap(x_c, x_m1, x_m2)
+                        .filter(|gap| *gap < 0.0)
+                        .map(|gap| -gap)
                 })
                 .fold(0.0_f64, f64::max)
         };
@@ -339,8 +336,7 @@ impl ContactStaticAssembly {
             }
 
             let neg_r: Vec<_> = r.iter().map(|&x| -x).collect();
-            let du =
-                solve_linear_system(&k_tangent, &neg_r, options.linear_solver.clone())?.values;
+            let du = solve_linear_system(&k_tangent, &neg_r, options.linear_solver.clone())?.values;
             axpy(1.0, &du, &mut u);
         }
 
@@ -374,13 +370,8 @@ pub fn solve_contact_static(
             );
             multipliers.resize(pairs.len(), 0.0);
 
-            let (u_new, newton_iters, _) = assembly.newton_solve(
-                &k_elastic,
-                &pairs,
-                &multipliers,
-                &u,
-                &options,
-            )?;
+            let (u_new, newton_iters, _) =
+                assembly.newton_solve(&k_elastic, &pairs, &multipliers, &u, &options)?;
             u = u_new;
             newton_iterations = newton_iters;
 
@@ -502,9 +493,7 @@ mod tests {
         let cells = vec![Cell::new(ElementKind::Tri3, vec![0, 1, 2])];
         let mesh = Mesh::new_with_cells(points, cells).unwrap();
 
-        let master_segments = vec![BoundarySegment {
-            nodes: [1, 0],
-        }];
+        let master_segments = vec![BoundarySegment { nodes: [1, 0] }];
         let pairs = find_contact_pairs(&mesh, &master_segments, &[2], &[0.0; 6]);
         assert_eq!(pairs.len(), 1);
         assert_eq!(pairs[0].candidate_node, 2);

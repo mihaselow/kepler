@@ -348,10 +348,10 @@ fn test_beam_3d_element() {
     assert!((k[2][8] - -3e6).abs() < 1.0);
 
     // 5. Check symmetry
-    for r in 0..12 {
-        for c in 0..12 {
+    for (r, row) in k.iter().enumerate().take(12) {
+        for (c, &k_rc) in row.iter().enumerate().take(12) {
             assert!(
-                (k[r][c] - k[c][r]).abs() < 1.0e-3,
+                (k_rc - k[c][r]).abs() < 1.0e-3,
                 "Symmetry failed at ({}, {})",
                 r,
                 c

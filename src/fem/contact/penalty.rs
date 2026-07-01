@@ -34,7 +34,7 @@ pub fn evaluate_penalty_contact(
     let xi = (rx * dx + ry * dy) / len_sq;
 
     // Check if node projects onto the segment
-    if xi < 0.0 || xi > 1.0 {
+    if !(0.0..=1.0).contains(&xi) {
         return None;
     }
 

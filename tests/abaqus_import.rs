@@ -2,7 +2,7 @@ use kepler::{abaqus_to_mesh_2d, parse_abaqus_str};
 
 #[test]
 fn abaqus_import_parses_block_fixture() {
-    let input = include_str!("../examples/data/block.inp");
+    let input = include_str!("../examples/data/abaqus/block.inp");
     let model = parse_abaqus_str(input).unwrap();
     assert_eq!(model.nodes.len(), 4);
     assert_eq!(model.elements.len(), 2);

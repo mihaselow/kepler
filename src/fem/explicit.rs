@@ -77,11 +77,7 @@ pub fn estimate_critical_time_step(stiffness: &CsMat<f64>, lumped_mass: &[f64]) 
         if mass <= 0.0 {
             continue;
         }
-        let stiffness_diag = stiffness
-            .get(dof, dof)
-            .copied()
-            .unwrap_or(0.0)
-            .max(0.0);
+        let stiffness_diag = stiffness.get(dof, dof).copied().unwrap_or(0.0).max(0.0);
         omega_max_sq = omega_max_sq.max(stiffness_diag / mass);
     }
     if omega_max_sq <= 0.0 {
@@ -108,7 +104,8 @@ where
         constraints: problem.constraints.clone(),
         forces: vec![],
     };
-    let stiffness = assemble_elasticity_stiffness_matrix(mesh, problem.material, problem.thickness)?;
+    let stiffness =
+        assemble_elasticity_stiffness_matrix(mesh, problem.material, problem.thickness)?;
     let lumped_mass = assemble_lumped_mass(mesh, problem.density, problem.thickness);
     let critical_time_step =
         estimate_critical_time_step(&stiffness, &lumped_mass) * options.safety_factor;
@@ -243,9 +240,7 @@ fn assemble_lumped_mass(mesh: &Mesh, density: f64, thickness: f64) -> Vec<f64> {
         let p0 = mesh.points()[n0];
         let p1 = mesh.points()[n1];
         let p2 = mesh.points()[n2];
-        let area = 0.5
-            * ((p1.x - p0.x) * (p2.y - p0.y) - (p2.x - p0.x) * (p1.y - p0.y))
-                .abs();
+        let area = 0.5 * ((p1.x - p0.x) * (p2.y - p0.y) - (p2.x - p0.x) * (p1.y - p0.y)).abs();
         let element_mass = density * thickness * area / 3.0;
         for node in [n0, n1, n2] {
             lumped[node * 2] += element_mass;

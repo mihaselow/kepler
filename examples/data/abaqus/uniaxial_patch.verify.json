@@ -1,0 +1,29 @@
+{
+  "description": "Unit square CPS4 under uniform x-tension (sigma_xx = 1 MPa)",
+  "thickness": 1.0,
+  "plane_stress": true,
+  "material": "STEEL",
+  "checks": [
+    {
+      "kind": "displacement_component",
+      "node": 1,
+      "component": "x",
+      "expected": 5.0e-6,
+      "tolerance_rel": 0.05
+    },
+    {
+      "kind": "displacement_component",
+      "node": 2,
+      "component": "x",
+      "expected": 5.0e-6,
+      "tolerance_rel": 0.05
+    },
+    {
+      "kind": "stress_component",
+      "element": 0,
+      "component": "sigma_xx",
+      "expected": 1.0e6,
+      "tolerance_rel": 0.05
+    }
+  ]
+}

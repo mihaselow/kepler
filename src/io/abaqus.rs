@@ -4,6 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     annotation::{GeometryAnnotations, MaterialAssignment},
+    fem::elasticity::{
+        DisplacementComponent, DisplacementConstraint, ElasticityMaterial, ElasticityModel,
+        ElasticityProblem, NodalForce,
+    },
     io::FileIoError,
     mesh::{Cell, ElementKind, Mesh, Point2},
 };
@@ -16,6 +20,7 @@ pub struct AbaqusModel {
     pub element_sets: BTreeMap<String, Vec<usize>>,
     pub materials: BTreeMap<String, AbaqusMaterial>,
     pub boundaries: Vec<AbaqusBoundary>,
+    pub cloads: Vec<AbaqusCload>,
     pub steps: Vec<AbaqusStep>,
 }
 
@@ -26,7 +31,7 @@ pub struct AbaqusElement {
     pub element_set: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct AbaqusMaterial {
     pub young_modulus: Option<f64>,
     pub poisson_ratio: Option<f64>,
@@ -34,7 +39,50 @@ pub struct AbaqusMaterial {
     pub plastic_points: Vec<[f64; 2]>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct AbaqusCload {
+    pub node: usize,
+    pub component: usize,
+    pub value: f64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AbaqusVerifyCase {
+    pub description: String,
+    pub thickness: f64,
+    pub plane_stress: bool,
+    pub material: String,
+    pub checks: Vec<AbaqusVerifyCheck>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AbaqusVerifyCheck {
+    DisplacementComponent {
+        node: usize,
+        component: String,
+        expected: f64,
+        #[serde(default)]
+        tolerance_abs: f64,
+        #[serde(default)]
+        tolerance_rel: f64,
+    },
+    StressComponent {
+        element: usize,
+        component: String,
+        expected: f64,
+        #[serde(default)]
+        tolerance_abs: f64,
+        #[serde(default = "default_stress_rel_tol")]
+        tolerance_rel: f64,
+    },
+}
+
+fn default_stress_rel_tol() -> f64 {
+    0.05
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct AbaqusBoundary {
     pub node: usize,
     pub component: usize,
@@ -63,6 +111,7 @@ pub fn parse_abaqus_str(input: &str) -> Result<AbaqusModel, FileIoError> {
     let mut element_sets: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     let mut materials: BTreeMap<String, AbaqusMaterial> = BTreeMap::new();
     let mut boundaries = Vec::new();
+    let mut cloads = Vec::new();
     let mut steps = Vec::new();
 
     let mut current_keyword = String::new();
@@ -80,16 +129,18 @@ pub fn parse_abaqus_str(input: &str) -> Result<AbaqusModel, FileIoError> {
         if line.starts_with("**") {
             continue;
         }
-        if line.starts_with('*') {
-            let keyword = line[1..]
+        if let Some(rest) = line.strip_prefix('*') {
+            let keyword = rest
                 .split(',')
                 .next()
                 .unwrap_or("")
                 .trim()
                 .to_ascii_uppercase();
             current_keyword = keyword.clone();
-            current_set_name = parse_parameter(line, "NSET").or_else(|| parse_parameter(line, "ELSET"));
-            pending_element_kind = parse_parameter(line, "TYPE").unwrap_or_else(|| "UNKNOWN".to_string());
+            current_set_name =
+                parse_parameter(line, "NSET").or_else(|| parse_parameter(line, "ELSET"));
+            pending_element_kind =
+                parse_parameter(line, "TYPE").unwrap_or_else(|| "UNKNOWN".to_string());
             pending_element_set = parse_parameter(line, "ELSET");
 
             if keyword == "MATERIAL" {
@@ -107,19 +158,17 @@ pub fn parse_abaqus_str(input: &str) -> Result<AbaqusModel, FileIoError> {
                     });
                 }
             }
-            if keyword == "STATIC" {
-                if let Some(name) = current_step.clone() {
-                    if let Some(step) = steps.iter_mut().find(|step| step.name == name) {
-                        step.kind = "static".to_string();
-                    }
-                }
+            if keyword == "STATIC"
+                && let Some(name) = current_step.clone()
+                && let Some(step) = steps.iter_mut().find(|step| step.name == name)
+            {
+                step.kind = "static".to_string();
             }
-            if keyword == "DYNAMIC" {
-                if let Some(name) = current_step.clone() {
-                    if let Some(step) = steps.iter_mut().find(|step| step.name == name) {
-                        step.kind = "dynamic".to_string();
-                    }
-                }
+            if keyword == "DYNAMIC"
+                && let Some(name) = current_step.clone()
+                && let Some(step) = steps.iter_mut().find(|step| step.name == name)
+            {
+                step.kind = "dynamic".to_string();
             }
             continue;
         }
@@ -194,7 +243,8 @@ pub fn parse_abaqus_str(input: &str) -> Result<AbaqusModel, FileIoError> {
                 }
                 let node = parse_usize(line_number + 1, tokens[0])? - 1;
                 let first_dof = parse_usize(line_number + 1, tokens[1])?;
-                let last_dof = parse_usize(line_number + 1, tokens.get(2).copied().unwrap_or(tokens[1]))?;
+                let last_dof =
+                    parse_usize(line_number + 1, tokens.get(2).copied().unwrap_or(tokens[1]))?;
                 let value = tokens
                     .get(3)
                     .map(|token| parse_f64(line_number + 1, token))
@@ -208,36 +258,49 @@ pub fn parse_abaqus_str(input: &str) -> Result<AbaqusModel, FileIoError> {
                     });
                 }
             }
+            "CLOAD" => {
+                if tokens.len() < 3 {
+                    return Err(FileIoError::InvalidLine {
+                        line: line_number + 1,
+                        expected: "node, dof, magnitude",
+                    });
+                }
+                cloads.push(AbaqusCload {
+                    node: parse_usize(line_number + 1, tokens[0])? - 1,
+                    component: parse_usize(line_number + 1, tokens[1])?,
+                    value: parse_f64(line_number + 1, tokens[2])?,
+                });
+            }
             "ELASTIC" => {
-                if let Some(name) = current_material.clone() {
-                    if tokens.len() >= 2 {
-                        let young = parse_f64(line_number + 1, tokens[0])?;
-                        let poisson = parse_f64(line_number + 1, tokens[1])?;
-                        let entry = materials.entry(name.clone()).or_default();
-                        entry.young_modulus = Some(young);
-                        entry.poisson_ratio = Some(poisson);
-                    }
+                if let Some(name) = current_material.clone()
+                    && tokens.len() >= 2
+                {
+                    let young = parse_f64(line_number + 1, tokens[0])?;
+                    let poisson = parse_f64(line_number + 1, tokens[1])?;
+                    let entry = materials.entry(name.clone()).or_default();
+                    entry.young_modulus = Some(young);
+                    entry.poisson_ratio = Some(poisson);
                 }
             }
             "PLASTIC" => {
-                if let Some(name) = current_material.clone() {
-                    if tokens.len() >= 2 {
-                        let stress = parse_f64(line_number + 1, tokens[0])?;
-                        let strain = parse_f64(line_number + 1, tokens[1])?;
-                        materials
-                            .entry(name)
-                            .or_default()
-                            .plastic_points
-                            .push([stress, strain]);
-                    }
+                if let Some(name) = current_material.clone()
+                    && tokens.len() >= 2
+                {
+                    let stress = parse_f64(line_number + 1, tokens[0])?;
+                    let strain = parse_f64(line_number + 1, tokens[1])?;
+                    materials
+                        .entry(name)
+                        .or_default()
+                        .plastic_points
+                        .push([stress, strain]);
                 }
             }
             "DENSITY" => {
-                if let Some(name) = current_material.clone() {
-                    if let Some(token) = tokens.first() {
-                        materials.entry(name).or_default().density =
-                            Some(parse_f64(line_number + 1, token)?);
-                    }
+                if let Some(name) = current_material.clone()
+                    && let Some(token) = tokens.first()
+                {
+                    materials.entry(name).or_default().density =
+                        Some(parse_f64(line_number + 1, token)?);
                 }
             }
             _ => {}
@@ -251,19 +314,9 @@ pub fn parse_abaqus_str(input: &str) -> Result<AbaqusModel, FileIoError> {
         element_sets,
         materials,
         boundaries,
+        cloads,
         steps,
     })
-}
-
-impl Default for AbaqusMaterial {
-    fn default() -> Self {
-        Self {
-            young_modulus: None,
-            poisson_ratio: None,
-            density: None,
-            plastic_points: Vec::new(),
-        }
-    }
 }
 
 pub fn abaqus_to_mesh_2d(model: &AbaqusModel) -> Result<Mesh, FileIoError> {
@@ -275,7 +328,10 @@ pub fn abaqus_to_mesh_2d(model: &AbaqusModel) -> Result<Mesh, FileIoError> {
     let mut cells = Vec::new();
     for element in &model.elements {
         let kind = map_abaqus_element_kind(&element.kind);
-        cells.push(Cell::new(kind, element.nodes.iter().map(|id| id - 1).collect()));
+        cells.push(Cell::new(
+            kind,
+            element.nodes.iter().map(|id| id - 1).collect(),
+        ));
     }
     Mesh::new_with_cells(points, cells).map_err(FileIoError::Mesh)
 }
@@ -293,6 +349,163 @@ pub fn abaqus_to_annotations(model: &AbaqusModel) -> GeometryAnnotations {
     annotations
 }
 
+/// Builds a 2D plane elasticity problem from a parsed Abaqus model.
+pub fn abaqus_to_elasticity_problem(
+    model: &AbaqusModel,
+    material_name: &str,
+    thickness: f64,
+    plane_stress: bool,
+) -> Result<ElasticityProblem, FileIoError> {
+    let material_props = model
+        .materials
+        .get(material_name)
+        .ok_or(FileIoError::InvalidLine {
+            line: 0,
+            expected: "material name present in *MATERIAL block",
+        })?;
+    let young_modulus = material_props
+        .young_modulus
+        .ok_or(FileIoError::InvalidLine {
+            line: 0,
+            expected: "*ELASTIC data for material",
+        })?;
+    let poisson_ratio = material_props.poisson_ratio.unwrap_or(0.3);
+
+    let mut constraints = Vec::with_capacity(model.boundaries.len());
+    for bc in &model.boundaries {
+        constraints.push(DisplacementConstraint {
+            node: bc.node,
+            component: abaqus_dof_to_component(bc.component)?,
+            value: bc.value,
+        });
+    }
+
+    let mut force_map: BTreeMap<(usize, DisplacementComponent), f64> = BTreeMap::new();
+    for load in &model.cloads {
+        let component = abaqus_dof_to_component(load.component)?;
+        *force_map.entry((load.node, component)).or_insert(0.0) += load.value;
+    }
+    let forces = force_map
+        .into_iter()
+        .map(|((node, component), value)| {
+            let mut force = NodalForce {
+                node,
+                fx: 0.0,
+                fy: 0.0,
+            };
+            match component {
+                DisplacementComponent::X => force.fx = value,
+                DisplacementComponent::Y => force.fy = value,
+            }
+            force
+        })
+        .collect();
+
+    Ok(ElasticityProblem {
+        material: ElasticityMaterial {
+            young_modulus,
+            poisson_ratio,
+            model: if plane_stress {
+                ElasticityModel::PlaneStress
+            } else {
+                ElasticityModel::PlaneStrain
+            },
+        },
+        thickness,
+        constraints,
+        forces,
+    })
+}
+
+pub fn parse_abaqus_verify_str(input: &str) -> Result<AbaqusVerifyCase, serde_json::Error> {
+    serde_json::from_str(input)
+}
+
+pub fn read_abaqus_verify_case(path: impl AsRef<Path>) -> Result<AbaqusVerifyCase, FileIoError> {
+    let path = path.as_ref();
+    let input = fs::read_to_string(path).map_err(|source| FileIoError::Read {
+        path: path.to_owned(),
+        source,
+    })?;
+    parse_abaqus_verify_str(&input).map_err(|_| FileIoError::InvalidLine {
+        line: 0,
+        expected: "valid Abaqus verification JSON",
+    })
+}
+
+pub fn verify_elasticity_against_case(
+    result: &crate::fem::elasticity::ElasticitySolverResult,
+    verify: &AbaqusVerifyCase,
+) -> Result<(), String> {
+    for check in &verify.checks {
+        match check {
+            AbaqusVerifyCheck::DisplacementComponent {
+                node,
+                component,
+                expected,
+                tolerance_abs,
+                tolerance_rel,
+            } => {
+                let actual = match component.to_lowercase().as_str() {
+                    "y" => result.displacements[*node][1],
+                    _ => result.displacements[*node][0],
+                };
+                if !close(actual, *expected, *tolerance_abs, *tolerance_rel) {
+                    return Err(format!(
+                        "displacement {component} at node {node}: expected {expected}, got {actual}"
+                    ));
+                }
+            }
+            AbaqusVerifyCheck::StressComponent {
+                element,
+                component,
+                expected,
+                tolerance_abs,
+                tolerance_rel,
+            } => {
+                let stress = &result.element_stress[*element];
+                let actual = match component.to_lowercase().as_str() {
+                    "sigma_yy" => stress.sigma_yy,
+                    "sigma_xy" => stress.sigma_xy,
+                    "von_mises" => stress.von_mises,
+                    _ => stress.sigma_xx,
+                };
+                if !close(actual, *expected, *tolerance_abs, *tolerance_rel) {
+                    return Err(format!(
+                        "stress {component} at element {element}: expected {expected}, got {actual}"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn close(actual: f64, expected: f64, tolerance_abs: f64, tolerance_rel: f64) -> bool {
+    let abs_tol = if tolerance_abs > 0.0 {
+        tolerance_abs
+    } else {
+        1.0e-12
+    };
+    let rel_tol = if tolerance_rel > 0.0 {
+        tolerance_rel
+    } else {
+        1.0e-9
+    };
+    (actual - expected).abs() <= abs_tol.max(rel_tol * expected.abs())
+}
+
+fn abaqus_dof_to_component(dof: usize) -> Result<DisplacementComponent, FileIoError> {
+    match dof {
+        2 => Ok(DisplacementComponent::Y),
+        1 => Ok(DisplacementComponent::X),
+        _ => Err(FileIoError::InvalidLine {
+            line: 0,
+            expected: "Abaqus dof 1 (x) or 2 (y) for 2D elasticity",
+        }),
+    }
+}
+
 fn map_abaqus_element_kind(kind: &str) -> ElementKind {
     match kind.to_ascii_uppercase().as_str() {
         "CPS3" | "CPE3" | "S3" => ElementKind::Tri3,
@@ -306,10 +519,10 @@ fn map_abaqus_element_kind(kind: &str) -> ElementKind {
 fn parse_parameter(line: &str, key: &str) -> Option<String> {
     for part in line.split(',') {
         let part = part.trim();
-        if let Some((name, value)) = part.split_once('=') {
-            if name.trim().eq_ignore_ascii_case(key) {
-                return Some(value.trim().trim_matches('"').to_string());
-            }
+        if let Some((name, value)) = part.split_once('=')
+            && name.trim().eq_ignore_ascii_case(key)
+        {
+            return Some(value.trim().trim_matches('"').to_string());
         }
     }
     None

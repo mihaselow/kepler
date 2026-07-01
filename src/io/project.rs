@@ -748,7 +748,9 @@ pub fn validate_job(job: &ProjectJob) -> Result<(), ProjectError> {
                 source,
             })?;
         }
-        ProjectPhysics::Elasticity3d(_) | ProjectPhysics::Modal3d(_) | ProjectPhysics::Structural(_) => {
+        ProjectPhysics::Elasticity3d(_)
+        | ProjectPhysics::Modal3d(_)
+        | ProjectPhysics::Structural(_) => {
             let _mesh = crate::MeshTopology::<3>::try_from(job.mesh.clone()).map_err(|source| {
                 ProjectError::Mesh {
                     job_id: job.id.clone(),

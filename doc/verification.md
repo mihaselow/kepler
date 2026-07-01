@@ -75,6 +75,7 @@ I/O and workflow tests:
 - `tests/project_workflow.rs`
 - `tests/cli_project.rs`
 - `tests/abaqus_import.rs`
+- `tests/abaqus_verification.rs`
 - `tests/benchmarks.rs`
 - `tests/verification_manifest.rs`
 - `src/bin/server.rs` unit tests for REST workflows
@@ -95,9 +96,15 @@ Current checked-in fixtures:
 - `examples/data/rest_project_solve_response.json`
 - `examples/data/rest_bad_schema_error_response.json`
 - `examples/data/rest_mesh_artifact_upload.json`
-- `examples/data/block.inp`
+- `examples/data/abaqus/block.inp`
+- `examples/data/abaqus/uniaxial_patch.inp`
+- `examples/data/abaqus/uniaxial_patch.verify.json`
+- `examples/data/abaqus/cantilever.inp`
+- `examples/data/abaqus/cantilever.verify.json`
+- `examples/data/abaqus/README.md`
+- `examples/solve_inp.rs`
 
-These fixtures cover the legacy mesh/params path, the v1 project workflow path, Gmsh import, VTK export, compact solution output, CLI project inspection, REST project validation/solve envelopes, REST error schema stability, and artifact uploads.
+These fixtures cover the legacy mesh/params path, the v1 project workflow path, Gmsh import, VTK export, compact solution output, CLI project inspection, REST project validation/solve envelopes, REST error schema stability, artifact uploads, and Abaqus INP verification benchmarks with analytical reference checks.
 
 ## Current Coverage Map
 

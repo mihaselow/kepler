@@ -1,5 +1,5 @@
 *HEADING
-Kepler block compression fixture
+Kepler block compression fixture (mixed CPS4/CPS3, import smoke test)
 *NODE
 1, 0., 0., 0.
 2, 1., 0., 0.

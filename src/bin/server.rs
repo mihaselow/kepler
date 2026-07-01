@@ -262,7 +262,11 @@ async fn solve_modal_endpoint(
         mode_count: request.problem.requested_modes,
     };
     let result = solve_modal(&mesh, &problem)?;
-    let values: Vec<f64> = result.modes.into_iter().map(|mode| mode.frequency_hz).collect();
+    let values: Vec<f64> = result
+        .modes
+        .into_iter()
+        .map(|mode| mode.frequency_hz)
+        .collect();
     Ok(Json(SolveVectorResponse {
         values,
         iterations: 0,
@@ -740,7 +744,11 @@ fn solve_project(project: &ProjectFile) -> Result<ProjectSolveResponse, ApiError
                 let (_mesh, assembly, options) = job_to_nonlinear_continuum(job)?;
                 let result = kepler::solve_nonlinear_continuum(&assembly, options)
                     .map_err(|error| ApiError::message(error.to_string()))?;
-                let flat_values = result.displacements_history.last().cloned().unwrap_or_default();
+                let flat_values = result
+                    .displacements_history
+                    .last()
+                    .cloned()
+                    .unwrap_or_default();
                 ProjectSolveJobResponse {
                     id: job.id.clone(),
                     status: "completed",

@@ -86,10 +86,7 @@ impl SpatialHashGrid2D {
 
             for i in i_min..=i_max {
                 for j in j_min..=j_max {
-                    self.segment_buckets
-                        .entry((i, j))
-                        .or_insert_with(Vec::new)
-                        .push(idx);
+                    self.segment_buckets.entry((i, j)).or_default().push(idx);
                 }
             }
         }

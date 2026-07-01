@@ -1,17 +1,19 @@
 use crate::fem::contact::penalty::ContactPair;
 use sprs::TriMat;
 
-/// Evaluates a single frictionless node-to-segment contact element using the augmented Lagrangian method.
-/// Returns (forces, stiffness, gap, updated_lambda_val) if in contact.
 /// Force vector layout: [f_cx, f_cy, f_m1x, f_m1y, f_m2x, f_m2y]
 /// Stiffness matrix layout: 6x6
+type AugmentedContactEvaluation = ([f64; 6], [[f64; 6]; 6], f64, f64);
+
+/// Evaluates a single frictionless node-to-segment contact element using the augmented Lagrangian method.
+/// Returns (forces, stiffness, gap, updated_lambda_val) if in contact.
 pub fn evaluate_augmented_contact(
     x_c: [f64; 2],
     x_m1: [f64; 2],
     x_m2: [f64; 2],
     lambda_n: f64,
     penalty: f64,
-) -> Option<([f64; 6], [[f64; 6]; 6], f64, f64)> {
+) -> Option<AugmentedContactEvaluation> {
     let dx = x_m2[0] - x_m1[0];
     let dy = x_m2[1] - x_m1[1];
     let len_sq = dx * dx + dy * dy;
@@ -30,7 +32,7 @@ pub fn evaluate_augmented_contact(
     let xi = (rx * dx + ry * dy) / len_sq;
 
     // Check if node projects onto the segment
-    if xi < 0.0 || xi > 1.0 {
+    if !(0.0..=1.0).contains(&xi) {
         return None;
     }
 
@@ -70,6 +72,7 @@ pub fn evaluate_augmented_contact(
 }
 
 /// Adds augmented Lagrangian contact contributions to global forces and tangent stiffness.
+#[allow(clippy::too_many_arguments)]
 pub fn assemble_augmented_contact(
     node_coords: &[[f64; 2]],
     u: &[f64],

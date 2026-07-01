@@ -651,7 +651,7 @@ impl<'a> Element for Beam3D<'a> {
             let mut m = vec![vec![0.0; 12]; 12];
             for i in 0..2 {
                 let offset = 6 * i;
-                m[offset + 0][offset + 0] = m_trans;
+                m[offset][offset] = m_trans;
                 m[offset + 1][offset + 1] = m_trans;
                 m[offset + 2][offset + 2] = m_trans;
                 m[offset + 3][offset + 3] = m_rot_x;
@@ -1167,9 +1167,21 @@ impl<'a> Element for ShellQuad4<'a> {
         let p3 = node_coords[3].coords;
 
         // e1 connects midpoint of 0-3 and midpoint of 1-2
-        let mid12 = [0.5 * (p1[0] + p2[0]), 0.5 * (p1[1] + p2[1]), 0.5 * (p1[2] + p2[2])];
-        let mid03 = [0.5 * (p0[0] + p3[0]), 0.5 * (p0[1] + p3[1]), 0.5 * (p0[2] + p3[2])];
-        let v1 = [mid12[0] - mid03[0], mid12[1] - mid03[1], mid12[2] - mid03[2]];
+        let mid12 = [
+            0.5 * (p1[0] + p2[0]),
+            0.5 * (p1[1] + p2[1]),
+            0.5 * (p1[2] + p2[2]),
+        ];
+        let mid03 = [
+            0.5 * (p0[0] + p3[0]),
+            0.5 * (p0[1] + p3[1]),
+            0.5 * (p0[2] + p3[2]),
+        ];
+        let v1 = [
+            mid12[0] - mid03[0],
+            mid12[1] - mid03[1],
+            mid12[2] - mid03[2],
+        ];
         let len_v1 = (v1[0].powi(2) + v1[1].powi(2) + v1[2].powi(2)).sqrt();
         if len_v1 <= f64::EPSILON {
             return Err(ElementError::DegenerateGeometry);
@@ -1214,10 +1226,14 @@ impl<'a> Element for ShellQuad4<'a> {
         let shear_modulus = young_modulus / (2.0 * (1.0 + poisson_ratio));
 
         // Midpoint difference terms for tying point coordinates
-        let dx_10 = x[1] - x[0]; let dy_10 = y[1] - y[0];
-        let dx_21 = x[2] - x[1]; let dy_21 = y[2] - y[1];
-        let dx_32 = x[3] - x[2]; let dy_32 = y[3] - y[2];
-        let dx_03 = x[0] - x[3]; let dy_03 = y[0] - y[3];
+        let dx_10 = x[1] - x[0];
+        let dy_10 = y[1] - y[0];
+        let dx_21 = x[2] - x[1];
+        let dy_21 = y[2] - y[1];
+        let dx_32 = x[3] - x[2];
+        let dy_32 = y[3] - y[2];
+        let dx_03 = x[0] - x[3];
+        let dy_03 = y[0] - y[3];
 
         let gp = [-1.0 / 3.0f64.sqrt(), 1.0 / 3.0f64.sqrt()];
         let mut k_membrane = vec![vec![0.0; 8]; 8];
@@ -1230,7 +1246,8 @@ impl<'a> Element for ShellQuad4<'a> {
             [0.0, 0.0, dm_factor * 0.5 * (1.0 - poisson_ratio)],
         ];
 
-        let db_factor = young_modulus * self.thickness.powi(3) / (12.0 * (1.0 - poisson_ratio.powi(2)));
+        let db_factor =
+            young_modulus * self.thickness.powi(3) / (12.0 * (1.0 - poisson_ratio.powi(2)));
         let db = [
             [db_factor, db_factor * poisson_ratio, 0.0],
             [db_factor * poisson_ratio, db_factor, 0.0],
@@ -1249,19 +1266,21 @@ impl<'a> Element for ShellQuad4<'a> {
                 ];
                 let d_n_dxi = [
                     -0.25 * (1.0 - eta),
-                     0.25 * (1.0 - eta),
-                     0.25 * (1.0 + eta),
+                    0.25 * (1.0 - eta),
+                    0.25 * (1.0 + eta),
                     -0.25 * (1.0 + eta),
                 ];
                 let d_n_deta = [
                     -0.25 * (1.0 - xi),
                     -0.25 * (1.0 + xi),
-                     0.25 * (1.0 + xi),
-                     0.25 * (1.0 - xi),
+                    0.25 * (1.0 + xi),
+                    0.25 * (1.0 - xi),
                 ];
 
-                let mut dx_dxi = 0.0; let mut dy_dxi = 0.0;
-                let mut dx_deta = 0.0; let mut dy_deta = 0.0;
+                let mut dx_dxi = 0.0;
+                let mut dy_dxi = 0.0;
+                let mut dx_deta = 0.0;
+                let mut dy_deta = 0.0;
                 for i in 0..4 {
                     dx_dxi += d_n_dxi[i] * x[i];
                     dy_dxi += d_n_dxi[i] * y[i];
@@ -1275,8 +1294,8 @@ impl<'a> Element for ShellQuad4<'a> {
                 }
 
                 let inv_j = [
-                    [ dy_deta / detj, -dy_dxi / detj],
-                    [-dx_deta / detj,  dx_dxi / detj],
+                    [dy_deta / detj, -dy_dxi / detj],
+                    [-dx_deta / detj, dx_dxi / detj],
                 ];
 
                 let mut nx = [0.0; 4];
@@ -1302,7 +1321,8 @@ impl<'a> Element for ShellQuad4<'a> {
                         db_val[0] = dm[0][0] * bm[0][c] + dm[0][1] * bm[1][c];
                         db_val[1] = dm[1][0] * bm[0][c] + dm[1][1] * bm[1][c];
                         db_val[2] = dm[2][2] * bm[2][c];
-                        k_membrane[r][c] += d_w * (bm[0][r] * db_val[0] + bm[1][r] * db_val[1] + bm[2][r] * db_val[2]);
+                        k_membrane[r][c] += d_w
+                            * (bm[0][r] * db_val[0] + bm[1][r] * db_val[1] + bm[2][r] * db_val[2]);
                     }
                 }
 
@@ -1321,26 +1341,43 @@ impl<'a> Element for ShellQuad4<'a> {
                         db_val[0] = db[0][0] * bb[0][c] + db[0][1] * bb[1][c];
                         db_val[1] = db[1][0] * bb[0][c] + db[1][1] * bb[1][c];
                         db_val[2] = db[2][2] * bb[2][c];
-                        k_bending[r][c] += d_w * (bb[0][r] * db_val[0] + bb[1][r] * db_val[1] + bb[2][r] * db_val[2]);
+                        k_bending[r][c] += d_w
+                            * (bb[0][r] * db_val[0] + bb[1][r] * db_val[1] + bb[2][r] * db_val[2]);
                     }
                 }
 
                 // --- 3. Transverse Shear (MITC4) ---
                 let mut ha = [0.0; 12];
-                ha[0] = -0.5; ha[1] = 0.25 * dy_10; ha[2] = -0.25 * dx_10;
-                ha[3] = 0.5;  ha[4] = 0.25 * dy_10; ha[5] = -0.25 * dx_10;
+                ha[0] = -0.5;
+                ha[1] = 0.25 * dy_10;
+                ha[2] = -0.25 * dx_10;
+                ha[3] = 0.5;
+                ha[4] = 0.25 * dy_10;
+                ha[5] = -0.25 * dx_10;
 
                 let mut hb = [0.0; 12];
-                hb[3] = -0.5; hb[4] = 0.25 * dy_21; hb[5] = -0.25 * dx_21;
-                hb[6] = 0.5;  hb[7] = 0.25 * dy_21; hb[8] = -0.25 * dx_21;
+                hb[3] = -0.5;
+                hb[4] = 0.25 * dy_21;
+                hb[5] = -0.25 * dx_21;
+                hb[6] = 0.5;
+                hb[7] = 0.25 * dy_21;
+                hb[8] = -0.25 * dx_21;
 
                 let mut hc = [0.0; 12];
-                hc[9] = -0.5; hc[10] = 0.25 * dy_32; hc[11] = -0.25 * dx_32;
-                hc[6] = 0.5;  hc[7] = 0.25 * dy_32; hc[8] = -0.25 * dx_32;
+                hc[9] = -0.5;
+                hc[10] = 0.25 * dy_32;
+                hc[11] = -0.25 * dx_32;
+                hc[6] = 0.5;
+                hc[7] = 0.25 * dy_32;
+                hc[8] = -0.25 * dx_32;
 
                 let mut hd = [0.0; 12];
-                hd[0] = -0.5; hd[1] = 0.25 * dy_03; hd[2] = -0.25 * dx_03;
-                hd[9] = 0.5;  hd[10] = 0.25 * dy_03; hd[11] = -0.25 * dx_03;
+                hd[0] = -0.5;
+                hd[1] = 0.25 * dy_03;
+                hd[2] = -0.25 * dx_03;
+                hd[9] = 0.5;
+                hd[10] = 0.25 * dy_03;
+                hd[11] = -0.25 * dx_03;
 
                 let mut hs = [[0.0; 12]; 2];
                 for i in 0..12 {
@@ -1462,9 +1499,21 @@ impl<'a> Element for ShellQuad4<'a> {
         let p2 = node_coords[2].coords;
         let p3 = node_coords[3].coords;
 
-        let mid12 = [0.5 * (p1[0] + p2[0]), 0.5 * (p1[1] + p2[1]), 0.5 * (p1[2] + p2[2])];
-        let mid03 = [0.5 * (p0[0] + p3[0]), 0.5 * (p0[1] + p3[1]), 0.5 * (p0[2] + p3[2])];
-        let v1 = [mid12[0] - mid03[0], mid12[1] - mid03[1], mid12[2] - mid03[2]];
+        let mid12 = [
+            0.5 * (p1[0] + p2[0]),
+            0.5 * (p1[1] + p2[1]),
+            0.5 * (p1[2] + p2[2]),
+        ];
+        let mid03 = [
+            0.5 * (p0[0] + p3[0]),
+            0.5 * (p0[1] + p3[1]),
+            0.5 * (p0[2] + p3[2]),
+        ];
+        let v1 = [
+            mid12[0] - mid03[0],
+            mid12[1] - mid03[1],
+            mid12[2] - mid03[2],
+        ];
         let len_v1 = (v1[0].powi(2) + v1[1].powi(2) + v1[2].powi(2)).sqrt();
         if len_v1 <= f64::EPSILON {
             return Err(ElementError::DegenerateGeometry);
@@ -1531,18 +1580,20 @@ impl<'a> Element for ShellQuad4<'a> {
                     ];
                     let d_n_dxi = [
                         -0.25 * (1.0 - eta),
-                         0.25 * (1.0 - eta),
-                         0.25 * (1.0 + eta),
+                        0.25 * (1.0 - eta),
+                        0.25 * (1.0 + eta),
                         -0.25 * (1.0 + eta),
                     ];
                     let d_n_deta = [
                         -0.25 * (1.0 - xi),
                         -0.25 * (1.0 + xi),
-                         0.25 * (1.0 + xi),
-                         0.25 * (1.0 - xi),
+                        0.25 * (1.0 + xi),
+                        0.25 * (1.0 - xi),
                     ];
-                    let mut dx_dxi = 0.0; let mut dy_dxi = 0.0;
-                    let mut dx_deta = 0.0; let mut dy_deta = 0.0;
+                    let mut dx_dxi = 0.0;
+                    let mut dy_dxi = 0.0;
+                    let mut dx_deta = 0.0;
+                    let mut dy_deta = 0.0;
                     for i in 0..4 {
                         dx_dxi += d_n_dxi[i] * x[i];
                         dy_dxi += d_n_dxi[i] * y[i];
@@ -1555,7 +1606,7 @@ impl<'a> Element for ShellQuad4<'a> {
                     for i in 0..4 {
                         for j in 0..4 {
                             let val = n_val[i] * n_val[j] * factor;
-                            m_local[i * 6 + 0][j * 6 + 0] += val;
+                            m_local[i * 6][j * 6] += val;
                             m_local[i * 6 + 1][j * 6 + 1] += val;
                             m_local[i * 6 + 2][j * 6 + 2] += val;
 
@@ -1756,14 +1807,14 @@ mod tests {
         assert_eq!(k.len(), 24);
 
         // Check symmetry of 24x24 matrix
-        for r in 0..24 {
-            for c in 0..24 {
+        for (r, row) in k.iter().enumerate().take(24) {
+            for (c, &k_rc) in row.iter().enumerate().take(24) {
                 assert!(
-                    (k[r][c] - k[c][r]).abs() < 1e-2,
+                    (k_rc - k[c][r]).abs() < 1e-2,
                     "Symmetry failed at ({}, {}): k[r][c]={}, k[c][r]={}",
                     r,
                     c,
-                    k[r][c],
+                    k_rc,
                     k[c][r]
                 );
             }

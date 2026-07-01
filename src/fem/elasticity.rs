@@ -6,8 +6,9 @@ use thiserror::Error;
 use crate::{
     fem::element::{Element, ElementError},
     linalg::{
-        HhtSolverOptions, LinalgError, LinearSolverOptions, NewmarkSolverOptions, SolverDiagnostics,
-        SolverOptions, solve_hht_transient, solve_linear_system, solve_newmark_transient,
+        HhtSolverOptions, LinalgError, LinearSolverOptions, NewmarkSolverOptions,
+        SolverDiagnostics, SolverOptions, solve_hht_transient, solve_linear_system,
+        solve_newmark_transient,
     },
     mesh::{ElementKind, Mesh, MeshTopology, NodeId, Point3, Tri3},
 };

@@ -1,11 +1,11 @@
-use std::sync::Arc;
 use sprs::{CsMat, TriMat};
+use std::sync::Arc;
 
 use crate::{
     fem::{
         contact::{
             penalty::assemble_penalty_contact,
-            solve::{find_contact_pairs, ContactProblem},
+            solve::{ContactProblem, find_contact_pairs},
         },
         material::{MaterialModel, MaterialState},
     },
@@ -90,7 +90,14 @@ impl NonlinearContinuumAssembly {
                     let b_mat = [
                         [b1 * inv2a, 0.0, b2 * inv2a, 0.0, b3 * inv2a, 0.0],
                         [0.0, c1 * inv2a, 0.0, c2 * inv2a, 0.0, c3 * inv2a],
-                        [c1 * inv2a, b1 * inv2a, c2 * inv2a, b2 * inv2a, c3 * inv2a, b3 * inv2a],
+                        [
+                            c1 * inv2a,
+                            b1 * inv2a,
+                            c2 * inv2a,
+                            b2 * inv2a,
+                            c3 * inv2a,
+                            b3 * inv2a,
+                        ],
                     ];
 
                     let u_e = [
@@ -121,7 +128,8 @@ impl NonlinearContinuumAssembly {
                     strain_3d[3] = eps_2d[2];
 
                     let state_old_g = &states_old[el_idx][0];
-                    let (stress_3d, state_new_g, c_3d) = self.material.integrate(&strain_3d, state_old_g);
+                    let (stress_3d, state_new_g, c_3d) =
+                        self.material.integrate(&strain_3d, state_old_g);
                     states_new.push(vec![state_new_g]);
 
                     let stress_2d = [stress_3d[0], stress_3d[1], stress_3d[3]];
@@ -151,7 +159,10 @@ impl NonlinearContinuumAssembly {
                             let mut val = 0.0;
                             for alpha in 0..3 {
                                 for beta in 0..3 {
-                                    val += b_mat[alpha][i] * c_2d[alpha][beta] * b_mat[beta][j] * factor;
+                                    val += b_mat[alpha][i]
+                                        * c_2d[alpha][beta]
+                                        * b_mat[beta][j]
+                                        * factor;
                                 }
                             }
                             k_local[i][j] = val;
@@ -244,7 +255,10 @@ impl NonlinearContinuumAssembly {
                             let b_mat = [
                                 [dn_dx[0], 0.0, dn_dx[1], 0.0, dn_dx[2], 0.0, dn_dx[3], 0.0],
                                 [0.0, dn_dy[0], 0.0, dn_dy[1], 0.0, dn_dy[2], 0.0, dn_dy[3]],
-                                [dn_dy[0], dn_dx[0], dn_dy[1], dn_dx[1], dn_dy[2], dn_dx[2], dn_dy[3], dn_dx[3]],
+                                [
+                                    dn_dy[0], dn_dx[0], dn_dy[1], dn_dx[1], dn_dy[2], dn_dx[2],
+                                    dn_dy[3], dn_dx[3],
+                                ],
                             ];
 
                             let mut eps_2d = [0.0; 3];
@@ -266,7 +280,8 @@ impl NonlinearContinuumAssembly {
                             strain_3d[3] = eps_2d[2];
 
                             let state_old_g = &states_old[el_idx][gp_idx];
-                            let (stress_3d, state_new_g, c_3d) = self.material.integrate(&strain_3d, state_old_g);
+                            let (stress_3d, state_new_g, c_3d) =
+                                self.material.integrate(&strain_3d, state_old_g);
                             el_states.push(state_new_g);
 
                             let stress_2d = [stress_3d[0], stress_3d[1], stress_3d[3]];
@@ -274,7 +289,8 @@ impl NonlinearContinuumAssembly {
 
                             for i in 0..8 {
                                 for alpha in 0..3 {
-                                    f_local[i] += b_mat[alpha][i] * stress_2d[alpha] * weight_factor;
+                                    f_local[i] +=
+                                        b_mat[alpha][i] * stress_2d[alpha] * weight_factor;
                                 }
                             }
 
@@ -289,7 +305,10 @@ impl NonlinearContinuumAssembly {
                                     let mut val = 0.0;
                                     for alpha in 0..3 {
                                         for beta in 0..3 {
-                                            val += b_mat[alpha][i] * c_2d[alpha][beta] * b_mat[beta][j] * weight_factor;
+                                            val += b_mat[alpha][i]
+                                                * c_2d[alpha][beta]
+                                                * b_mat[beta][j]
+                                                * weight_factor;
                                         }
                                     }
                                     k_local[i][j] += val;
@@ -302,10 +321,14 @@ impl NonlinearContinuumAssembly {
                     states_new.push(el_states);
 
                     let global_dofs = [
-                        n0 * 2, n0 * 2 + 1,
-                        n1 * 2, n1 * 2 + 1,
-                        n2 * 2, n2 * 2 + 1,
-                        n3 * 2, n3 * 2 + 1,
+                        n0 * 2,
+                        n0 * 2 + 1,
+                        n1 * 2,
+                        n1 * 2 + 1,
+                        n2 * 2,
+                        n2 * 2 + 1,
+                        n3 * 2,
+                        n3 * 2 + 1,
                     ];
 
                     for i in 0..8 {
@@ -338,7 +361,11 @@ impl NonlinearContinuumAssembly {
     }
 
     #[allow(clippy::needless_range_loop)]
-    pub fn recover_nodal_stresses(&self, u: &[f64], states: &[Vec<MaterialState>]) -> Vec<[f64; 6]> {
+    pub fn recover_nodal_stresses(
+        &self,
+        u: &[f64],
+        states: &[Vec<MaterialState>],
+    ) -> Vec<[f64; 6]> {
         let node_count = self.mesh.node_count();
         let mut nodal_stress = vec![[0.0; 6]; node_count];
         let mut counts = vec![0.0; node_count];
@@ -365,7 +392,14 @@ impl NonlinearContinuumAssembly {
                     let b_mat = [
                         [b1 * inv2a, 0.0, b2 * inv2a, 0.0, b3 * inv2a, 0.0],
                         [0.0, c1 * inv2a, 0.0, c2 * inv2a, 0.0, c3 * inv2a],
-                        [c1 * inv2a, b1 * inv2a, c2 * inv2a, b2 * inv2a, c3 * inv2a, b3 * inv2a],
+                        [
+                            c1 * inv2a,
+                            b1 * inv2a,
+                            c2 * inv2a,
+                            b2 * inv2a,
+                            c3 * inv2a,
+                            b3 * inv2a,
+                        ],
                     ];
 
                     let u_e = [
@@ -469,7 +503,10 @@ impl NonlinearContinuumAssembly {
                     let b_mat = [
                         [dn_dx[0], 0.0, dn_dx[1], 0.0, dn_dx[2], 0.0, dn_dx[3], 0.0],
                         [0.0, dn_dy[0], 0.0, dn_dy[1], 0.0, dn_dy[2], 0.0, dn_dy[3]],
-                        [dn_dy[0], dn_dx[0], dn_dy[1], dn_dx[1], dn_dy[2], dn_dx[2], dn_dy[3], dn_dx[3]],
+                        [
+                            dn_dy[0], dn_dx[0], dn_dy[1], dn_dx[1], dn_dy[2], dn_dx[2], dn_dy[3],
+                            dn_dx[3],
+                        ],
                     ];
 
                     let mut eps_2d = [0.0; 3];
@@ -550,7 +587,8 @@ pub fn solve_nonlinear_continuum(
         let mut _states_iter = states_converged.clone();
 
         for _iter in 1..=options.max_iterations {
-            let (mut f_int, mut kt, states_next) = assembly.evaluate_system(&u_iter, &states_converged);
+            let (mut f_int, mut kt, states_next) =
+                assembly.evaluate_system(&u_iter, &states_converged);
 
             if let Some(contact) = &assembly.contact {
                 let pairs = find_contact_pairs(
@@ -559,12 +597,8 @@ pub fn solve_nonlinear_continuum(
                     &contact.slave_nodes,
                     &u_iter,
                 );
-                let ref_coords: Vec<[f64; 2]> = assembly
-                    .mesh
-                    .points()
-                    .iter()
-                    .map(|p| [p.x, p.y])
-                    .collect();
+                let ref_coords: Vec<[f64; 2]> =
+                    assembly.mesh.points().iter().map(|p| [p.x, p.y]).collect();
                 let bc_set: std::collections::BTreeSet<usize> = assembly
                     .dirichlet_boundary
                     .iter()
@@ -656,28 +690,17 @@ mod tests {
             Point2::new(0.0, 1.0),
         ];
 
-        let cells = vec![crate::mesh::Cell::new(
-            ElementKind::Quad4,
-            vec![0, 1, 2, 3],
-        )];
+        let cells = vec![crate::mesh::Cell::new(ElementKind::Quad4, vec![0, 1, 2, 3])];
 
         let mesh = Mesh::new_with_cells(points, cells).unwrap();
         let material = Arc::new(J2PlasticMaterial::new(200e9, 0.3, 250e6, 10e9));
 
         // Fixed on left (ux=0 at 0,3), fixed in y on bottom (uy=0 at 0,1)
-        let dirichlet_boundary = vec![
-            (0, 0, 0.0),
-            (0, 1, 0.0),
-            (3, 0, 0.0),
-            (1, 1, 0.0),
-        ];
+        let dirichlet_boundary = vec![(0, 0, 0.0), (0, 1, 0.0), (3, 0, 0.0), (1, 1, 0.0)];
 
         // Apply a tension force of 3e7 N at the right nodes (ux force at 1 and 2)
         // This will pull the element to yield stress (limit is 250 MPa)
-        let external_forces = vec![
-            (1, 0, 1.5e7),
-            (2, 0, 1.5e7),
-        ];
+        let external_forces = vec![(1, 0, 1.5e7), (2, 0, 1.5e7)];
 
         let assembly = NonlinearContinuumAssembly {
             mesh,

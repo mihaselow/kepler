@@ -246,7 +246,8 @@ fn local_thermal_load_tri3(
     reference_temperature: f64,
 ) -> Result<Vec<f64>, ElasticityError> {
     let (area, gradients) = triangle_gradients(mesh, triangle)?;
-    let delta_temperature = element_delta_temperature(triangle.nodes, temperatures, reference_temperature);
+    let delta_temperature =
+        element_delta_temperature(triangle.nodes, temperatures, reference_temperature);
     let thermal_stress = thermal_stress_vector(constitutive, alpha, delta_temperature);
     let strain_displacement = strain_displacement_matrix(gradients);
     Ok(scatter_thermal_load(
@@ -272,9 +273,9 @@ fn local_thermal_load_quad4(
             Point3::new([point.x, point.y, 0.0])
         })
         .collect();
-    let delta_temperature =
-        nodes.iter().map(|&node| temperatures[node]).sum::<f64>() / nodes.len() as f64
-            - reference_temperature;
+    let delta_temperature = nodes.iter().map(|&node| temperatures[node]).sum::<f64>()
+        / nodes.len() as f64
+        - reference_temperature;
     let thermal_stress = thermal_stress_vector(constitutive, alpha, delta_temperature);
 
     let xi = 0.0;
@@ -374,7 +375,10 @@ fn thermal_stress_vector(
     stress
 }
 
-fn triangle_gradients(mesh: &Mesh, triangle: &Tri3) -> Result<(f64, [[f64; 2]; 3]), ElasticityError> {
+fn triangle_gradients(
+    mesh: &Mesh,
+    triangle: &Tri3,
+) -> Result<(f64, [[f64; 2]; 3]), ElasticityError> {
     let [a, b, c] = triangle.nodes.map(|node| mesh.points()[node]);
     let twice_area = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
     let area = 0.5 * twice_area.abs();
@@ -455,11 +459,24 @@ fn strain_displacement_matrix(gradients: [[f64; 2]; 3]) -> [[f64; 6]; 3] {
 fn strain_displacement_matrix_quad4(gradients: [[f64; 2]; 4]) -> [[f64; 8]; 3] {
     [
         [
-            gradients[0][0], 0.0, gradients[1][0], 0.0, gradients[2][0], 0.0, gradients[3][0],
+            gradients[0][0],
+            0.0,
+            gradients[1][0],
+            0.0,
+            gradients[2][0],
+            0.0,
+            gradients[3][0],
             0.0,
         ],
         [
-            0.0, gradients[0][1], 0.0, gradients[1][1], 0.0, gradients[2][1], 0.0, gradients[3][1],
+            0.0,
+            gradients[0][1],
+            0.0,
+            gradients[1][1],
+            0.0,
+            gradients[2][1],
+            0.0,
+            gradients[3][1],
         ],
         [
             gradients[0][1],
@@ -504,8 +521,11 @@ fn recover_thermoelastic_stress(
         .iter()
         .map(|cell| {
             let nodes: Vec<NodeId> = cell.nodes.clone();
-            let delta_temperature =
-                element_delta_temperature(nodes.iter().copied(), temperatures, reference_temperature);
+            let delta_temperature = element_delta_temperature(
+                nodes.iter().copied(),
+                temperatures,
+                reference_temperature,
+            );
             let thermal_strain = [alpha * delta_temperature, alpha * delta_temperature, 0.0];
             let mut strain = [0.0; 3];
 
@@ -529,8 +549,7 @@ fn recover_thermoelastic_stress(
             let mut stress = [0.0; 3];
             for row in 0..3 {
                 for col in 0..3 {
-                    stress[row] +=
-                        constitutive[row][col] * (strain[col] - thermal_strain[col]);
+                    stress[row] += constitutive[row][col] * (strain[col] - thermal_strain[col]);
                 }
             }
             StressTensor2D::from_components(stress[0], stress[1], stress[2])

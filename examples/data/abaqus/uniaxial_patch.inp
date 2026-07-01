@@ -1,0 +1,22 @@
+*HEADING
+Kepler verification: uniaxial tension patch (1 CPS4 element)
+** Reference: uniform sigma_xx = F/A = 1e6 Pa, eps_xx = sigma/E, u_x(L) = eps*L = 5e-6 m
+*NODE
+1, 0., 0., 0.
+2, 1., 0., 0.
+3, 1., 1., 0.
+4, 0., 1., 0.
+*ELEMENT, TYPE=CPS4, ELSET=PATCH
+1, 1, 2, 3, 4
+*MATERIAL, NAME=STEEL
+*ELASTIC
+200.e9, 0.3
+*BOUNDARY
+1, 1, 2
+4, 1, 2
+*CLOAD
+2, 1, 5.e5
+3, 1, 5.e5
+*STEP, NAME=LOAD
+*STATIC
+*END STEP

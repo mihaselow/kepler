@@ -240,7 +240,7 @@ impl crate::linalg::ArcLengthSystem for NonlinearTrussAssembly {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::linalg::{NonlinearSolverOptions, newton_solve, riks_solve, RiksSolverOptions};
+    use crate::linalg::{NonlinearSolverOptions, RiksSolverOptions, newton_solve, riks_solve};
 
     #[test]
     fn test_von_mises_snap_through() {
@@ -337,12 +337,7 @@ mod tests {
             },
         ];
 
-        let dirichlet_boundary = vec![
-            (0, 0, 0.0),
-            (0, 1, 0.0),
-            (2, 0, 0.0),
-            (2, 1, 0.0),
-        ];
+        let dirichlet_boundary = vec![(0, 0, 0.0), (0, 1, 0.0), (2, 0, 0.0), (2, 1, 0.0)];
 
         // Apex downward force. Limit load of this structure is roughly ~70,000 N.
         // We apply a reference downward force of -20,000 N.
@@ -357,10 +352,12 @@ mod tests {
         };
 
         let initial_values = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-        let mut riks_opts = RiksSolverOptions::default();
-        riks_opts.initial_arc_length = 0.02;
-        riks_opts.max_steps = 40;
-        riks_opts.tolerance = 1e-5;
+        let riks_opts = RiksSolverOptions {
+            initial_arc_length: 0.02,
+            max_steps: 40,
+            tolerance: 1e-5,
+            ..RiksSolverOptions::default()
+        };
 
         let result = riks_solve(&assembly, initial_values, riks_opts).unwrap();
 

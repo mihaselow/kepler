@@ -54,7 +54,10 @@ pub enum ResultIoError {
 
 pub const RESULT_SCHEMA_VERSION: u32 = 1;
 
-pub fn write_json_result(path: impl AsRef<Path>, result: &KeplerResultFile) -> Result<(), ResultIoError> {
+pub fn write_json_result(
+    path: impl AsRef<Path>,
+    result: &KeplerResultFile,
+) -> Result<(), ResultIoError> {
     let path = path.as_ref();
     let payload = serde_json::to_vec_pretty(result)?;
     fs::write(path, payload).map_err(|source| ResultIoError::Write {
@@ -72,7 +75,10 @@ pub fn read_json_result(path: impl AsRef<Path>) -> Result<KeplerResultFile, Resu
     Ok(serde_json::from_slice(&payload)?)
 }
 
-pub fn write_hdf5_result(path: impl AsRef<Path>, result: &KeplerResultFile) -> Result<(), ResultIoError> {
+pub fn write_hdf5_result(
+    path: impl AsRef<Path>,
+    result: &KeplerResultFile,
+) -> Result<(), ResultIoError> {
     #[cfg(feature = "hdf5")]
     {
         use hdf5::prelude::*;

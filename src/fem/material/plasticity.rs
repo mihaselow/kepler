@@ -215,7 +215,8 @@ mod tests {
         .sqrt();
         let vm = (1.5f64).sqrt() * s_norm;
 
-        let expected_yield = material.yield_stress + material.hardening_modulus * state_new.equivalent_plastic_strain;
+        let expected_yield = material.yield_stress
+            + material.hardening_modulus * state_new.equivalent_plastic_strain;
         assert!((vm - expected_yield).abs() < 1.0); // within 1 Pa accuracy
     }
 
@@ -243,11 +244,14 @@ mod tests {
             let mut perturbed_strain_minus = base_strain;
             perturbed_strain_minus[j] -= eps;
 
-            let (stress_perturbed_plus, _, _) = material.integrate(&perturbed_strain_plus, &state_p);
-            let (stress_perturbed_minus, _, _) = material.integrate(&perturbed_strain_minus, &state_p);
+            let (stress_perturbed_plus, _, _) =
+                material.integrate(&perturbed_strain_plus, &state_p);
+            let (stress_perturbed_minus, _, _) =
+                material.integrate(&perturbed_strain_minus, &state_p);
 
             for i in 0..6 {
-                c_numerical[i][j] = (stress_perturbed_plus[i] - stress_perturbed_minus[i]) / (2.0 * eps);
+                c_numerical[i][j] =
+                    (stress_perturbed_plus[i] - stress_perturbed_minus[i]) / (2.0 * eps);
             }
         }
 

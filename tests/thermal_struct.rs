@@ -14,7 +14,13 @@ fn thermoelastic_unrestrained_bar_thermal_expansion() {
 
     let result = solve_thermoelastic(
         &mesh,
-        &bar_problem(&mesh, delta_t, alpha, young_modulus, unrestrained_constraints()),
+        &bar_problem(
+            &mesh,
+            delta_t,
+            alpha,
+            young_modulus,
+            unrestrained_constraints(),
+        ),
         SolverOptions::default(),
         SolverOptions::default(),
         ThermoElasticStaggerOptions::default(),
@@ -36,7 +42,13 @@ fn thermoelastic_constrained_bar_thermal_stress() {
 
     let result = solve_thermoelastic(
         &mesh,
-        &bar_problem(&mesh, delta_t, alpha, young_modulus, constrained_constraints()),
+        &bar_problem(
+            &mesh,
+            delta_t,
+            alpha,
+            young_modulus,
+            constrained_constraints(),
+        ),
         SolverOptions::default(),
         SolverOptions::default(),
         ThermoElasticStaggerOptions::default(),

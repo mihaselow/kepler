@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
+use kepler::mesh::{Cell, ElementKind};
 use kepler::{
     J2PlasticMaterial, LinearSolverOptions, Mesh, NonlinearContinuumAssembly,
     NonlinearContinuumSolverOptions, Point2, solve_nonlinear_continuum,
 };
-use kepler::mesh::{Cell, ElementKind};
 
 /// J2 block under uniaxial compression yields and hardens beyond elastic limit.
 #[test]
@@ -45,7 +45,10 @@ fn j2_block_compression_reaches_plastic_flow() {
     let final_stresses = result.nodal_stress_history.last().unwrap();
 
     let uy_top = final_displacements[2 * 2 + 1];
-    assert!(uy_top < 0.0, "top nodes should move downward under compression");
+    assert!(
+        uy_top < 0.0,
+        "top nodes should move downward under compression"
+    );
 
     let von_mises_like = final_stresses[1][0].abs().max(final_stresses[1][1].abs());
     assert!(

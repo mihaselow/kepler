@@ -1,9 +1,9 @@
+use kepler::fem::contact::search::BoundarySegment;
+use kepler::mesh::{Cell, ElementKind};
 use kepler::{
     ContactProblem, ContactStaticAssembly, ContactStaticSolverOptions, ElasticityMaterial,
     ElasticityModel, LinearSolverBackend, LinearSolverOptions, Mesh, Point2, solve_contact_static,
 };
-use kepler::fem::contact::search::BoundarySegment;
-use kepler::mesh::{Cell, ElementKind};
 
 /// Slave block initially penetrating the master surface relaxes to gap-free equilibrium.
 #[test]
