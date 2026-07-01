@@ -1733,7 +1733,7 @@ fn residual_norm(matrix: &CsMat<f64>, values: &[f64], rhs: &[f64]) -> f64 {
         .sqrt()
 }
 
-fn axpy(alpha: f64, x: &[f64], y: &mut [f64]) {
+pub fn axpy(alpha: f64, x: &[f64], y: &mut [f64]) {
     for (y_value, x_value) in y.iter_mut().zip(x) {
         *y_value += alpha * x_value;
     }
@@ -1774,7 +1774,7 @@ fn dot(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b).map(|(a, b)| a * b).sum()
 }
 
-fn norm(values: &[f64]) -> f64 {
+pub fn norm(values: &[f64]) -> f64 {
     dot(values, values).sqrt()
 }
 

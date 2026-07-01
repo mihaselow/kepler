@@ -53,6 +53,10 @@ pub use fem::modal::{
     solve_modal, solve_modal_3d,
 };
 pub use fem::nonlinear::{NonlinearTrussAssembly, NonlinearTrussElement};
+pub use fem::nonlinear_continuum::{
+    NonlinearContinuumAssembly, NonlinearContinuumResult, NonlinearContinuumSolverOptions,
+    solve_nonlinear_continuum,
+};
 pub use fem::material::{MaterialModel, MaterialState};
 pub use fem::material::plasticity::J2PlasticMaterial;
 pub use fem::poisson::{
@@ -89,9 +93,9 @@ pub use linalg::{
     NewmarkStepResult, NonlinearSolverDiagnostics, NonlinearSolverOptions, NonlinearSolverResult,
     NonlinearSystem, PreconditionerKind, RiksResult, RiksSolverOptions, RiksStepResult,
     SolverDiagnostics, SolverOptions, SparsityStats, SpdHeuristics, SymmetryDiagnostics,
-    TransientSolverOptions, TransientStepResult, analyze_matrix, newton_solve, riks_solve,
-    solve_harmonic_response, solve_lanczos_modes, solve_linear_system, solve_linear_transient,
-    solve_newmark_transient,
+    TransientSolverOptions, TransientStepResult, analyze_matrix, axpy, newton_solve, norm,
+    riks_solve, solve_harmonic_response, solve_lanczos_modes, solve_linear_system,
+    solve_linear_transient, solve_newmark_transient,
 };
 pub use mesh::{
     Cell, CellId, ElementKind, EntityDimension, FacetId, FieldId, MaterialId, Mesh, MeshError,
