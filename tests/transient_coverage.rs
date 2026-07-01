@@ -1,13 +1,14 @@
 use kepler::{
     Cell, DisplacementComponent, DisplacementComponent3D, DisplacementConstraint,
     DisplacementConstraint3D, ELECTROSTATIC_FORMULATION, ElasticityMaterial, ElasticityMaterial3D,
-    ElasticityModel, ElectrostaticFormulation, ElementKind, LinearSolverBackend,
-    LinearSolverOptions, Mesh, MeshTopology, NewmarkSolverOptions, NodalForce, NodalForce3D,
-    Point2, PointD, TransientDiffusionReactionProblem, TransientDiffusionReactionProblem3D,
-    TransientElasticityProblem, TransientElasticityProblem3D, TransientHeatProblem,
-    TransientSolverOptions, Tri3, solve_transient_diffusion_reaction,
-    solve_transient_diffusion_reaction_3d, solve_transient_elasticity,
-    solve_transient_elasticity_3d, solve_transient_heat,
+    ElasticityModel, ElectrostaticFormulation, ElementKind, HhtSolverOptions,
+    LinearSolverBackend, LinearSolverOptions, Mesh, MeshTopology, NewmarkSolverOptions,
+    NodalForce, NodalForce3D, Point2, PointD, TransientDiffusionReactionProblem,
+    TransientDiffusionReactionProblem3D, TransientElasticityProblem,
+    TransientElasticityProblem3D, TransientHeatProblem, TransientSolverOptions, Tri3,
+    solve_transient_diffusion_reaction, solve_transient_diffusion_reaction_3d,
+    solve_transient_elasticity, solve_transient_elasticity_3d, solve_transient_elasticity_hht,
+    solve_transient_heat,
 };
 
 #[test]
@@ -131,6 +132,39 @@ fn solver_stack_exercises_complete_transient_physics_coverage() {
     .unwrap();
     assert_eq!(
         elasticity_3d.steps[0].diagnostics.backend,
+        LinearSolverBackend::DenseDirect
+    );
+
+    let hht_options = HhtSolverOptions {
+        time_step: 1.0,
+        steps: 1,
+        alpha: -0.05,
+        linear_solver: dense_direct_options(),
+    };
+    let elasticity_hht = solve_transient_elasticity_hht(
+        &mesh_2d,
+        &TransientElasticityProblem {
+            material: material_2d(),
+            thickness: 1.0,
+            density: 6.0,
+            constraints: fixed_nodes_2d(&[0, 2]),
+            forces: |_| {
+                vec![NodalForce {
+                    node: 1,
+                    fx: 1.0,
+                    fy: 0.0,
+                }]
+            },
+            initial_displacements: vec![[0.0, 0.0]; 3],
+            initial_velocities: vec![[0.0, 0.0]; 3],
+            rayleigh_alpha: None,
+            rayleigh_beta: None,
+        },
+        hht_options,
+    )
+    .unwrap();
+    assert_eq!(
+        elasticity_hht.steps[0].diagnostics.backend,
         LinearSolverBackend::DenseDirect
     );
 

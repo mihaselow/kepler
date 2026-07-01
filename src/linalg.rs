@@ -219,6 +219,45 @@ pub struct NewmarkStepResult {
     pub linear_diagnostics: SolverDiagnostics,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct HhtSolverOptions {
+    pub time_step: f64,
+    pub steps: usize,
+    pub alpha: f64,
+    pub linear_solver: LinearSolverOptions,
+}
+
+impl Default for HhtSolverOptions {
+    fn default() -> Self {
+        Self {
+            time_step: 1.0,
+            steps: 1,
+            alpha: -0.05,
+            linear_solver: LinearSolverOptions::default(),
+        }
+    }
+}
+
+impl HhtSolverOptions {
+    pub fn beta(&self) -> f64 {
+        let a = self.alpha;
+        (1.0 - a) * (1.0 - a) / 4.0
+    }
+
+    pub fn gamma(&self) -> f64 {
+        0.5 - self.alpha
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HhtStepResult {
+    pub time: f64,
+    pub displacements: Vec<f64>,
+    pub velocities: Vec<f64>,
+    pub accelerations: Vec<f64>,
+    pub linear_diagnostics: SolverDiagnostics,
+}
+
 pub trait LinearSolver {
     fn solve(&self, matrix: &CsMat<f64>, rhs: &[f64]) -> Result<LinearSolverResult, LinalgError>;
 }
@@ -287,6 +326,8 @@ pub enum LinalgError {
     InvalidNewmarkGamma(f64),
     #[error("Newmark beta must be positive and finite, got {0}")]
     InvalidNewmarkBeta(f64),
+    #[error("HHT alpha must be finite and in [-1/3, 0], got {0}")]
+    InvalidHhtAlpha(f64),
     #[error("initial state length {initial_len} does not match matrix dimension {matrix_dim}")]
     TransientDimensionMismatch {
         matrix_dim: usize,
@@ -989,6 +1030,153 @@ where
         velocities = next_velocities;
         accelerations = next_accelerations;
         steps.push(NewmarkStepResult {
+            time,
+            displacements: displacements.clone(),
+            velocities: velocities.clone(),
+            accelerations: accelerations.clone(),
+            linear_diagnostics: result.diagnostics,
+        });
+    }
+
+    Ok(steps)
+}
+
+pub fn solve_hht_transient<F>(
+    mass: &CsMat<f64>,
+    damping: Option<&CsMat<f64>>,
+    stiffness: &CsMat<f64>,
+    initial_displacements: Vec<f64>,
+    initial_velocities: Vec<f64>,
+    source: F,
+    options: HhtSolverOptions,
+) -> Result<Vec<HhtStepResult>, LinalgError>
+where
+    F: Fn(f64) -> Vec<f64>,
+{
+    let beta = options.beta();
+    let gamma = options.gamma();
+    let newmark_probe = NewmarkSolverOptions {
+        time_step: options.time_step,
+        steps: options.steps,
+        gamma,
+        beta,
+        linear_solver: options.linear_solver.clone(),
+    };
+    validate_newmark_inputs(
+        mass,
+        damping,
+        stiffness,
+        initial_displacements.len(),
+        initial_velocities.len(),
+        &newmark_probe,
+    )?;
+    if !options.alpha.is_finite() || options.alpha < -1.0 / 3.0 || options.alpha > 0.0 {
+        return Err(LinalgError::InvalidHhtAlpha(options.alpha));
+    }
+
+    let dt = options.time_step;
+    let alpha = options.alpha;
+    let damping_matrix = damping.cloned();
+    let mut displacements = initial_displacements;
+    let mut velocities = initial_velocities;
+    let initial_source = source(0.0);
+    if initial_source.len() != displacements.len() {
+        return Err(LinalgError::DimensionMismatch {
+            matrix_dim: displacements.len(),
+            rhs_len: initial_source.len(),
+        });
+    }
+
+    let mut acceleration_rhs = initial_source;
+    subtract_assign(
+        &mut acceleration_rhs,
+        &mul_csr_vec(stiffness, &displacements),
+    );
+    if let Some(damping) = damping_matrix.as_ref() {
+        subtract_assign(&mut acceleration_rhs, &mul_csr_vec(damping, &velocities));
+    }
+    let initial_acceleration =
+        solve_linear_system(mass, &acceleration_rhs, options.linear_solver.clone())?;
+    let mut accelerations = initial_acceleration.values;
+
+    let a0 = 1.0 / (beta * dt * dt);
+    let a1 = gamma / (beta * dt);
+    let a2 = 1.0 / (beta * dt);
+    let a3 = 1.0 / (2.0 * beta) - 1.0;
+    let a4 = gamma / beta - 1.0;
+    let a5 = dt * (gamma / (2.0 * beta) - 1.0);
+    let mass_scale = a0;
+    let damping_scale = a1;
+    let lhs = match damping_matrix.as_ref() {
+        Some(damping) => {
+            add_three_scaled_matrices(stiffness, damping, mass, 1.0, damping_scale, mass_scale)
+        }
+        None => add_scaled_matrices(stiffness, mass, 1.0, mass_scale),
+    };
+
+    let mut steps = Vec::with_capacity(options.steps);
+    let mut previous_source = source(0.0);
+
+    for step_index in 1..=options.steps {
+        let time = step_index as f64 * dt;
+        let next_source = source(time);
+        if next_source.len() != displacements.len() {
+            return Err(LinalgError::DimensionMismatch {
+                matrix_dim: displacements.len(),
+                rhs_len: next_source.len(),
+            });
+        }
+
+        let ku = mul_csr_vec(stiffness, &displacements);
+        let cv = damping_matrix
+            .as_ref()
+            .map(|damping| mul_csr_vec(damping, &velocities))
+            .unwrap_or_else(|| vec![0.0; displacements.len()]);
+        let ma = mul_csr_vec(mass, &accelerations);
+
+        let mut rhs = next_source.clone();
+        axpy(alpha, &next_source, &mut rhs);
+        axpy(-alpha, &previous_source, &mut rhs);
+
+        let mut mass_history = displacements.clone();
+        axpy(a2, &velocities, &mut mass_history);
+        axpy(a3, &accelerations, &mut mass_history);
+        axpy(a0, &mass_history, &mut rhs);
+
+        if damping_matrix.is_some() {
+            let mut damping_history = displacements.clone();
+            axpy(a4, &velocities, &mut damping_history);
+            axpy(a5, &accelerations, &mut damping_history);
+            axpy(a1, &damping_history, &mut rhs);
+        }
+
+        axpy(-alpha, &ku, &mut rhs);
+        axpy(-alpha, &cv, &mut rhs);
+        axpy(-alpha, &ma, &mut rhs);
+
+        let result = solve_linear_system(&lhs, &rhs, options.linear_solver.clone())?;
+        let next_displacements = result.values;
+        let next_accelerations: Vec<_> = next_displacements
+            .iter()
+            .zip(&displacements)
+            .zip(&velocities)
+            .zip(&accelerations)
+            .map(|(((next, displacement), velocity), acceleration)| {
+                (next - displacement - dt * velocity) / (beta * dt * dt)
+                    - (1.0 - 2.0 * beta) / (2.0 * beta) * acceleration
+            })
+            .collect();
+        let mut next_velocities = velocities.clone();
+        for index in 0..next_velocities.len() {
+            next_velocities[index] = velocities[index]
+                + dt * ((1.0 - gamma) * accelerations[index] + gamma * next_accelerations[index]);
+        }
+
+        displacements = next_displacements;
+        velocities = next_velocities;
+        accelerations = next_accelerations;
+        previous_source = next_source;
+        steps.push(HhtStepResult {
             time,
             displacements: displacements.clone(),
             velocities: velocities.clone(),
