@@ -91,7 +91,7 @@ pub use io::{
         ProjectOutputFormat, ProjectPhysics, ProjectPoint2, ProjectPoissonProblem,
         ProjectPreconditionerKind, ProjectSource, ProjectTriangle, default_project_solver_options,
         format_project, job_to_elasticity, job_to_elasticity_3d, job_to_modal, job_to_modal_3d,
-        job_to_poisson, parse_project_str, read_project_file, validate_job, validate_project,
+        job_to_poisson, job_to_structural, parse_project_str, read_project_file, validate_job, validate_project,
     },
     solution::{format_solution, write_solution_file},
     vtk::{VtkScalarField, format_vtk_legacy, write_vtk_legacy_file},

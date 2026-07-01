@@ -269,18 +269,24 @@ fn inspect_project_file(project_path: PathBuf) -> Result<(), Box<dyn std::error:
             kepler::ProjectPhysics::Elasticity3d(_) => "elasticity_3d",
             kepler::ProjectPhysics::Modal(_) => "modal",
             kepler::ProjectPhysics::Modal3d(_) => "modal_3d",
+            kepler::ProjectPhysics::Structural(_) => "structural",
         };
-        let points_count = job.mesh.points.as_ref().map(|p| p.len())
+        let points_count = job
+            .mesh
+            .points
+            .as_ref()
+            .map(|p| p.len())
             .or_else(|| job.mesh.points_3d.as_ref().map(|p| p.len()))
             .unwrap_or(0);
-        let cells_count = job.mesh.cells.as_ref().map(|c| c.len())
+        let cells_count = job
+            .mesh
+            .cells
+            .as_ref()
+            .map(|c| c.len())
             .unwrap_or_else(|| job.mesh.triangles.len());
         println!(
             "- {}: physics={}, points={}, cells={}",
-            job.id,
-            physics,
-            points_count,
-            cells_count
+            job.id, physics, points_count, cells_count
         );
     }
     Ok(())

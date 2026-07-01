@@ -20,10 +20,9 @@ use serde::{Deserialize, Serialize};
 
 use kepler::{
     LinearSolverBackend, LinearSolverOptions, Mesh, Point2, PoissonProblem, PreconditionerKind,
-    ProjectFile, ProjectPhysics, SolverDiagnostics, SolverOptions, Tri3, job_to_poisson,
-    job_to_elasticity, job_to_elasticity_3d, job_to_modal, job_to_modal_3d,
-    parse_mesh_str, parse_params_str, parse_project_str, solve_poisson_with_solver,
-    validate_project,
+    ProjectFile, ProjectPhysics, SolverDiagnostics, SolverOptions, Tri3, job_to_elasticity,
+    job_to_elasticity_3d, job_to_modal, job_to_modal_3d, job_to_poisson, job_to_structural, parse_mesh_str,
+    parse_params_str, parse_project_str, solve_poisson_with_solver, validate_project,
 };
 
 #[tokio::main]
@@ -465,7 +464,11 @@ fn solve_project(project: &ProjectFile) -> Result<ProjectSolveResponse, ApiError
             ProjectPhysics::Elasticity(_) => {
                 let (mesh, problem, options) = job_to_elasticity(job)?;
                 let result = kepler::solve_elasticity_with_solver(&mesh, &problem, options)?;
-                let flat_values: Vec<f64> = result.displacements.into_iter().flat_map(|d| d.to_vec()).collect();
+                let flat_values: Vec<f64> = result
+                    .displacements
+                    .into_iter()
+                    .flat_map(|d| d.to_vec())
+                    .collect();
                 ProjectSolveJobResponse {
                     id: job.id.clone(),
                     status: "completed",
@@ -479,7 +482,11 @@ fn solve_project(project: &ProjectFile) -> Result<ProjectSolveResponse, ApiError
             ProjectPhysics::Elasticity3d(_) => {
                 let (mesh, problem, options) = job_to_elasticity_3d(job)?;
                 let result = kepler::solve_elasticity_3d_with_solver(&mesh, &problem, options)?;
-                let flat_values: Vec<f64> = result.displacements.into_iter().flat_map(|d| d.to_vec()).collect();
+                let flat_values: Vec<f64> = result
+                    .displacements
+                    .into_iter()
+                    .flat_map(|d| d.to_vec())
+                    .collect();
                 ProjectSolveJobResponse {
                     id: job.id.clone(),
                     status: "completed",
@@ -493,7 +500,8 @@ fn solve_project(project: &ProjectFile) -> Result<ProjectSolveResponse, ApiError
             ProjectPhysics::Modal(_) => {
                 let (mesh, problem, _options) = job_to_modal(job)?;
                 let result = kepler::solve_modal(&mesh, &problem)?;
-                let frequencies: Vec<f64> = result.modes.into_iter().map(|m| m.frequency_hz).collect();
+                let frequencies: Vec<f64> =
+                    result.modes.into_iter().map(|m| m.frequency_hz).collect();
                 ProjectSolveJobResponse {
                     id: job.id.clone(),
                     status: "completed",
@@ -507,7 +515,8 @@ fn solve_project(project: &ProjectFile) -> Result<ProjectSolveResponse, ApiError
             ProjectPhysics::Modal3d(_) => {
                 let (mesh, problem, _options) = job_to_modal_3d(job)?;
                 let result = kepler::solve_modal_3d(&mesh, &problem)?;
-                let frequencies: Vec<f64> = result.modes.into_iter().map(|m| m.frequency_hz).collect();
+                let frequencies: Vec<f64> =
+                    result.modes.into_iter().map(|m| m.frequency_hz).collect();
                 ProjectSolveJobResponse {
                     id: job.id.clone(),
                     status: "completed",
@@ -515,6 +524,24 @@ fn solve_project(project: &ProjectFile) -> Result<ProjectSolveResponse, ApiError
                     values: frequencies,
                     iterations: 0,
                     residual_norm: 0.0,
+                    diagnostics: DiagnosticsResponse::default(),
+                }
+            }
+            ProjectPhysics::Structural(_) => {
+                let (mesh, problem, options) = job_to_structural(job)?;
+                let result = kepler::solve_structural_with_solver(&mesh, &problem, options)?;
+                let flat_values: Vec<f64> = result
+                    .displacements
+                    .into_iter()
+                    .flat_map(|d| d.to_vec())
+                    .collect();
+                ProjectSolveJobResponse {
+                    id: job.id.clone(),
+                    status: "completed",
+                    physics: "structural",
+                    values: flat_values,
+                    iterations: result.iterations,
+                    residual_norm: result.residual_norm,
                     diagnostics: DiagnosticsResponse::default(),
                 }
             }
@@ -709,10 +736,18 @@ impl From<&kepler::ProjectJob> for ProjectJobSummaryResponse {
             id: value.id.clone(),
             status: "valid",
             physics: physics_name(&value.physics),
-            points: value.mesh.points.as_ref().map(|p| p.len())
+            points: value
+                .mesh
+                .points
+                .as_ref()
+                .map(|p| p.len())
                 .or_else(|| value.mesh.points_3d.as_ref().map(|p| p.len()))
                 .unwrap_or(0),
-            triangles: value.mesh.cells.as_ref().map(|c| c.len())
+            triangles: value
+                .mesh
+                .cells
+                .as_ref()
+                .map(|c| c.len())
                 .unwrap_or_else(|| value.mesh.triangles.len()),
         }
     }
@@ -928,6 +963,12 @@ impl From<kepler::fem::elasticity::ElasticityError> for ApiError {
     }
 }
 
+impl From<kepler::StructuralError> for ApiError {
+    fn from(value: kepler::StructuralError) -> Self {
+        Self::bad_request(value)
+    }
+}
+
 impl From<kepler::fem::modal::ModalError> for ApiError {
     fn from(value: kepler::fem::modal::ModalError) -> Self {
         Self::bad_request(value)
@@ -965,6 +1006,7 @@ fn physics_name(physics: &ProjectPhysics) -> &'static str {
         ProjectPhysics::Elasticity3d(_) => "elasticity_3d",
         ProjectPhysics::Modal(_) => "modal",
         ProjectPhysics::Modal3d(_) => "modal_3d",
+        ProjectPhysics::Structural(_) => "structural",
     }
 }
 

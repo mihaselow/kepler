@@ -77,6 +77,7 @@ pub enum ProjectPhysics {
     Modal(ProjectModalProblem),
     #[serde(rename = "modal_3d")]
     Modal3d(ProjectModalProblem3D),
+    Structural(ProjectStructuralProblem),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -160,6 +161,66 @@ pub struct ProjectElasticityConstraint3D {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProjectElasticityForce3D {
+    pub node: usize,
+    pub component: String,
+    pub value: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectStructuralProblem {
+    pub material: ProjectStructuralMaterial,
+    #[serde(default)]
+    pub beam_section: ProjectBeamSection,
+    pub shell_thickness: f64,
+    #[serde(default)]
+    pub constraints: Vec<ProjectStructuralConstraint>,
+    #[serde(default)]
+    pub forces: Vec<ProjectStructuralForce>,
+    #[serde(default)]
+    pub solver_options: ProjectLinearSolverOptions,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ProjectStructuralMaterial {
+    pub young_modulus: f64,
+    pub poisson_ratio: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ProjectBeamSection {
+    pub area: f64,
+    pub moment_y: f64,
+    pub moment_z: f64,
+    pub torsional_constant: f64,
+    #[serde(default = "default_local_y_direction")]
+    pub local_y_direction: [f64; 3],
+}
+
+fn default_local_y_direction() -> [f64; 3] {
+    [0.0, 1.0, 0.0]
+}
+
+impl Default for ProjectBeamSection {
+    fn default() -> Self {
+        Self {
+            area: 0.01,
+            moment_y: 1.0e-5,
+            moment_z: 2.0e-5,
+            torsional_constant: 3.0e-5,
+            local_y_direction: default_local_y_direction(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectStructuralConstraint {
+    pub node: usize,
+    pub component: String,
+    pub value: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectStructuralForce {
     pub node: usize,
     pub component: String,
     pub value: f64,
@@ -367,14 +428,16 @@ impl ProjectFile {
 impl From<&Mesh> for ProjectMesh {
     fn from(value: &Mesh) -> Self {
         Self {
-            points: Some(value
-                .points()
-                .iter()
-                .map(|point| ProjectPoint2 {
-                    x: point.x,
-                    y: point.y,
-                })
-                .collect()),
+            points: Some(
+                value
+                    .points()
+                    .iter()
+                    .map(|point| ProjectPoint2 {
+                        x: point.x,
+                        y: point.y,
+                    })
+                    .collect(),
+            ),
             points_3d: None,
             triangles: value
                 .triangles()
@@ -596,10 +659,12 @@ pub fn validate_job(job: &ProjectJob) -> Result<(), ProjectError> {
                 source,
             })?;
         }
-        ProjectPhysics::Elasticity3d(_) | ProjectPhysics::Modal3d(_) => {
-            let _mesh = crate::MeshTopology::<3>::try_from(job.mesh.clone()).map_err(|source| ProjectError::Mesh {
-                job_id: job.id.clone(),
-                source,
+        ProjectPhysics::Elasticity3d(_) | ProjectPhysics::Modal3d(_) | ProjectPhysics::Structural(_) => {
+            let _mesh = crate::MeshTopology::<3>::try_from(job.mesh.clone()).map_err(|source| {
+                ProjectError::Mesh {
+                    job_id: job.id.clone(),
+                    source,
+                }
             })?;
         }
     }
@@ -629,7 +694,16 @@ pub fn job_to_poisson(job: &ProjectJob) -> Result<(Mesh, PoissonFileConfig), Pro
     }
 }
 
-pub fn job_to_elasticity(job: &ProjectJob) -> Result<(Mesh, crate::fem::elasticity::ElasticityProblem, LinearSolverOptions), ProjectError> {
+pub fn job_to_elasticity(
+    job: &ProjectJob,
+) -> Result<
+    (
+        Mesh,
+        crate::fem::elasticity::ElasticityProblem,
+        LinearSolverOptions,
+    ),
+    ProjectError,
+> {
     match &job.physics {
         ProjectPhysics::Elasticity(problem) => {
             let mesh = Mesh::try_from(job.mesh.clone()).map_err(|source| ProjectError::Mesh {
@@ -659,12 +733,23 @@ pub fn job_to_elasticity(job: &ProjectJob) -> Result<(Mesh, crate::fem::elastici
     }
 }
 
-pub fn job_to_elasticity_3d(job: &ProjectJob) -> Result<(crate::MeshTopology<3>, crate::fem::elasticity::ElasticityProblem3D, LinearSolverOptions), ProjectError> {
+pub fn job_to_elasticity_3d(
+    job: &ProjectJob,
+) -> Result<
+    (
+        crate::MeshTopology<3>,
+        crate::fem::elasticity::ElasticityProblem3D,
+        LinearSolverOptions,
+    ),
+    ProjectError,
+> {
     match &job.physics {
         ProjectPhysics::Elasticity3d(problem) => {
-            let mesh = crate::MeshTopology::<3>::try_from(job.mesh.clone()).map_err(|source| ProjectError::Mesh {
-                job_id: job.id.clone(),
-                source,
+            let mesh = crate::MeshTopology::<3>::try_from(job.mesh.clone()).map_err(|source| {
+                ProjectError::Mesh {
+                    job_id: job.id.clone(),
+                    source,
+                }
             })?;
             let material = crate::ElasticityMaterial3D::from(problem.material.clone());
             let constraints: Vec<crate::DisplacementConstraint3D> = problem
@@ -688,7 +773,9 @@ pub fn job_to_elasticity_3d(job: &ProjectJob) -> Result<(crate::MeshTopology<3>,
     }
 }
 
-pub fn job_to_modal(job: &ProjectJob) -> Result<(Mesh, crate::fem::modal::ModalProblem, LinearSolverOptions), ProjectError> {
+pub fn job_to_modal(
+    job: &ProjectJob,
+) -> Result<(Mesh, crate::fem::modal::ModalProblem, LinearSolverOptions), ProjectError> {
     match &job.physics {
         ProjectPhysics::Modal(problem) => {
             let mesh = Mesh::try_from(job.mesh.clone()).map_err(|source| ProjectError::Mesh {
@@ -722,12 +809,23 @@ pub fn job_to_modal(job: &ProjectJob) -> Result<(Mesh, crate::fem::modal::ModalP
     }
 }
 
-pub fn job_to_modal_3d(job: &ProjectJob) -> Result<(crate::MeshTopology<3>, crate::fem::modal::ModalProblem3D, LinearSolverOptions), ProjectError> {
+pub fn job_to_modal_3d(
+    job: &ProjectJob,
+) -> Result<
+    (
+        crate::MeshTopology<3>,
+        crate::fem::modal::ModalProblem3D,
+        LinearSolverOptions,
+    ),
+    ProjectError,
+> {
     match &job.physics {
         ProjectPhysics::Modal3d(problem) => {
-            let mesh = crate::MeshTopology::<3>::try_from(job.mesh.clone()).map_err(|source| ProjectError::Mesh {
-                job_id: job.id.clone(),
-                source,
+            let mesh = crate::MeshTopology::<3>::try_from(job.mesh.clone()).map_err(|source| {
+                ProjectError::Mesh {
+                    job_id: job.id.clone(),
+                    source,
+                }
             })?;
             let material = crate::ElasticityMaterial3D::from(problem.material.clone());
             let constraints: Vec<crate::DisplacementConstraint3D> = problem
@@ -755,7 +853,54 @@ pub fn job_to_modal_3d(job: &ProjectJob) -> Result<(crate::MeshTopology<3>, crat
     }
 }
 
-pub fn project_forces_to_nodal_forces(forces: Vec<ProjectElasticityForce>) -> Vec<crate::fem::elasticity::NodalForce> {
+pub fn job_to_structural(
+    job: &ProjectJob,
+) -> Result<
+    (
+        crate::MeshTopology<3>,
+        crate::fem::structural_solve::StructuralProblem,
+        LinearSolverOptions,
+    ),
+    ProjectError,
+> {
+    match &job.physics {
+        ProjectPhysics::Structural(problem) => {
+            let mesh = crate::MeshTopology::<3>::try_from(job.mesh.clone()).map_err(|source| {
+                ProjectError::Mesh {
+                    job_id: job.id.clone(),
+                    source,
+                }
+            })?;
+            let constraints = problem
+                .constraints
+                .iter()
+                .map(|c| crate::StructuralConstraint::from(c.clone()))
+                .collect();
+            let forces = problem
+                .forces
+                .iter()
+                .map(|f| crate::StructuralForce::from(f.clone()))
+                .collect();
+            let problem_internal = crate::fem::structural_solve::StructuralProblem {
+                material: crate::StructuralMaterial::from(problem.material),
+                beam_section: crate::BeamSection::from(problem.beam_section),
+                shell_thickness: problem.shell_thickness,
+                constraints,
+                forces,
+            };
+            let solver_options = LinearSolverOptions::from(problem.solver_options.clone());
+            Ok((mesh, problem_internal, solver_options))
+        }
+        _ => Err(ProjectError::InvalidConfiguration {
+            job_id: job.id.clone(),
+            message: "expected structural physics".to_string(),
+        }),
+    }
+}
+
+pub fn project_forces_to_nodal_forces(
+    forces: Vec<ProjectElasticityForce>,
+) -> Vec<crate::fem::elasticity::NodalForce> {
     let mut map = std::collections::BTreeMap::new();
     for f in forces {
         let entry = map.entry(f.node).or_insert((0.0, 0.0));
@@ -770,7 +915,9 @@ pub fn project_forces_to_nodal_forces(forces: Vec<ProjectElasticityForce>) -> Ve
         .collect()
 }
 
-pub fn project_forces_to_nodal_forces_3d(forces: Vec<ProjectElasticityForce3D>) -> Vec<crate::fem::elasticity::NodalForce3D> {
+pub fn project_forces_to_nodal_forces_3d(
+    forces: Vec<ProjectElasticityForce3D>,
+) -> Vec<crate::fem::elasticity::NodalForce3D> {
     let mut map = std::collections::BTreeMap::new();
     for f in forces {
         let entry = map.entry(f.node).or_insert((0.0, 0.0, 0.0));
@@ -832,6 +979,58 @@ impl From<ProjectElasticityMaterial3D> for crate::ElasticityMaterial3D {
             young_modulus: val.young_modulus,
             poisson_ratio: val.poisson_ratio,
         }
+    }
+}
+
+impl From<ProjectStructuralMaterial> for crate::StructuralMaterial {
+    fn from(val: ProjectStructuralMaterial) -> Self {
+        Self {
+            young_modulus: val.young_modulus,
+            poisson_ratio: val.poisson_ratio,
+        }
+    }
+}
+
+impl From<ProjectBeamSection> for crate::BeamSection {
+    fn from(val: ProjectBeamSection) -> Self {
+        Self {
+            area: val.area,
+            moment_y: val.moment_y,
+            moment_z: val.moment_z,
+            torsional_constant: val.torsional_constant,
+            local_y_direction: val.local_y_direction,
+        }
+    }
+}
+
+impl From<ProjectStructuralConstraint> for crate::StructuralConstraint {
+    fn from(val: ProjectStructuralConstraint) -> Self {
+        Self {
+            node: val.node,
+            component: parse_structural_component(&val.component),
+            value: val.value,
+        }
+    }
+}
+
+impl From<ProjectStructuralForce> for crate::StructuralForce {
+    fn from(val: ProjectStructuralForce) -> Self {
+        Self {
+            node: val.node,
+            component: parse_structural_component(&val.component),
+            value: val.value,
+        }
+    }
+}
+
+fn parse_structural_component(component: &str) -> crate::StructuralComponent {
+    match component.to_lowercase().as_str() {
+        "uy" | "y" => crate::StructuralComponent::Uy,
+        "uz" | "z" => crate::StructuralComponent::Uz,
+        "theta_x" | "rx" => crate::StructuralComponent::ThetaX,
+        "theta_y" | "ry" => crate::StructuralComponent::ThetaY,
+        "theta_z" | "rz" => crate::StructuralComponent::ThetaZ,
+        _ => crate::StructuralComponent::Ux,
     }
 }
 

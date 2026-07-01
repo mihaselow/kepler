@@ -296,6 +296,82 @@ fn test_multi_physics_project_mapping() {
     assert_eq!(problem_3d.elasticity.material.young_modulus, 70e9);
     assert_eq!(problem_3d.elasticity.material.poisson_ratio, 0.33);
     assert_eq!(problem_3d.elasticity.constraints.len(), 1);
-    assert_eq!(options_3d.backend, kepler::LinearSolverBackend::ConjugateGradient);
-    assert_eq!(options_3d.preconditioner, kepler::PreconditionerKind::Jacobi);
+    assert_eq!(
+        options_3d.backend,
+        kepler::LinearSolverBackend::ConjugateGradient
+    );
+    assert_eq!(
+        options_3d.preconditioner,
+        kepler::PreconditionerKind::Jacobi
+    );
+}
+
+#[test]
+fn parses_structural_beam_project_job() {
+    let json = r#"
+    {
+      "schema_version": 1,
+      "name": "cantilever beam",
+      "jobs": [
+        {
+          "id": "beam-structural",
+          "mesh": {
+            "points_3d": [
+              { "x": 0.0, "y": 0.0, "z": 0.0 },
+              { "x": 10.0, "y": 0.0, "z": 0.0 }
+            ],
+            "cells": [
+              { "kind": "beam3d", "nodes": [0, 1] }
+            ]
+          },
+          "physics": {
+            "kind": "structural",
+            "material": {
+              "young_modulus": 200e9,
+              "poisson_ratio": 0.3
+            },
+            "beam_section": {
+              "area": 0.01,
+              "moment_y": 1.0e-5,
+              "moment_z": 1.0e-4,
+              "torsional_constant": 3.0e-5,
+              "local_y_direction": [0.0, 1.0, 0.0]
+            },
+            "shell_thickness": 0.1,
+            "constraints": [
+              { "node": 0, "component": "ux", "value": 0.0 },
+              { "node": 0, "component": "uy", "value": 0.0 },
+              { "node": 0, "component": "uz", "value": 0.0 },
+              { "node": 0, "component": "theta_x", "value": 0.0 },
+              { "node": 0, "component": "theta_y", "value": 0.0 },
+              { "node": 0, "component": "theta_z", "value": 0.0 }
+            ],
+            "forces": [
+              { "node": 1, "component": "uy", "value": 1000.0 }
+            ],
+            "solver_options": {
+              "max_iterations": 1000,
+              "tolerance": 1e-8,
+              "backend": "dense_direct",
+              "preconditioner": "none",
+              "record_residual_history": false
+            }
+          }
+        }
+      ]
+    }
+    "#;
+
+    let project = parse_project_str(json).unwrap();
+    let (mesh, problem, options) = kepler::job_to_structural(&project.jobs[0]).unwrap();
+    assert_eq!(mesh.points().len(), 2);
+    assert_eq!(problem.material.young_modulus, 200e9);
+    assert_eq!(problem.beam_section.moment_z, 1.0e-4);
+    assert_eq!(problem.constraints.len(), 6);
+    assert_eq!(problem.forces.len(), 1);
+    assert_eq!(options.backend, kepler::LinearSolverBackend::DenseDirect);
+
+    let result = kepler::solve_structural_with_solver(&mesh, &problem, options).unwrap();
+    let expected = 1000.0 * 10.0_f64.powi(3) / (3.0 * 200e9 * 1.0e-4);
+    assert!((result.displacements[1][1] - expected).abs() < 1.0e-6);
 }
