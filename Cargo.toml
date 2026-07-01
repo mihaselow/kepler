@@ -13,3 +13,8 @@ sprs-ldl = "0.10.0"
 thiserror = "2.0.18"
 tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread", "net"] }
 tower = { version = "0.5.3", features = ["util"] }
+hdf5 = { version = "0.8", optional = true }
+
+[features]
+default = []
+hdf5 = ["dep:hdf5"]
