@@ -16,3 +16,4 @@ pub mod quadratic;
 pub mod quadrature;
 pub mod structural;
 pub mod structural_solve;
+pub mod thermal_struct;
