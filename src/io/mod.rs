@@ -1,8 +1,10 @@
+pub mod abaqus;
 pub mod cad;
 pub mod gmsh;
 pub mod mesh;
 pub mod params;
 pub mod project;
+pub mod result_format;
 pub mod solution;
 pub mod vtk;
 
@@ -94,7 +96,7 @@ pub enum FileIoError {
     },
 }
 
-fn parse_usize(line: usize, value: &str) -> Result<usize, FileIoError> {
+pub(crate) fn parse_usize(line: usize, value: &str) -> Result<usize, FileIoError> {
     value.parse().map_err(|source| FileIoError::ParseInt {
         line,
         value: value.to_owned(),
@@ -102,7 +104,7 @@ fn parse_usize(line: usize, value: &str) -> Result<usize, FileIoError> {
     })
 }
 
-fn parse_f64(line: usize, value: &str) -> Result<f64, FileIoError> {
+pub(crate) fn parse_f64(line: usize, value: &str) -> Result<f64, FileIoError> {
     value.parse().map_err(|source| FileIoError::ParseFloat {
         line,
         value: value.to_owned(),
