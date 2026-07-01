@@ -6,6 +6,7 @@ pub mod dof;
 pub mod elasticity;
 pub mod electrostatics;
 pub mod element;
+pub mod explicit;
 pub mod heat;
 pub mod material;
 pub mod modal;
