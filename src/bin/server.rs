@@ -19,10 +19,14 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use kepler::{
-    LinearSolverBackend, LinearSolverOptions, Mesh, Point2, PoissonProblem, PreconditionerKind,
-    ProjectFile, ProjectPhysics, SolverDiagnostics, SolverOptions, Tri3, job_to_elasticity,
-    job_to_elasticity_3d, job_to_modal, job_to_modal_3d, job_to_poisson, job_to_structural, parse_mesh_str,
-    parse_params_str, parse_project_str, solve_poisson_with_solver, validate_project,
+    DiffusionReactionProblem, ElasticityMaterial, ElasticityModel, ElasticityProblem,
+    LinearSolverBackend, LinearSolverOptions, Mesh, ModalProblem, Point2, PoissonProblem,
+    PreconditionerKind, ProjectFile, ProjectPhysics, SolverDiagnostics, SolverOptions,
+    SteadyHeatProblem, Tri3, job_to_contact, job_to_elasticity, job_to_elasticity_3d, job_to_modal,
+    job_to_modal_3d, job_to_nonlinear_continuum, job_to_poisson, job_to_structural, parse_mesh_str,
+    parse_params_str, parse_project_str, solve_diffusion_reaction_with_solver,
+    solve_elasticity_with_solver, solve_modal, solve_poisson_with_solver,
+    solve_steady_heat_with_solver, validate_project,
 };
 
 #[tokio::main]
@@ -55,6 +59,10 @@ fn app_with_state(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/solve/poisson", post(solve_poisson_endpoint))
+        .route("/solve/elasticity", post(solve_elasticity_endpoint))
+        .route("/solve/heat", post(solve_heat_endpoint))
+        .route("/solve/modal", post(solve_modal_endpoint))
+        .route("/solve/diffusion", post(solve_diffusion_endpoint))
         .route("/projects/validate", post(validate_project_endpoint))
         .route("/projects/solve", post(solve_project_endpoint))
         .route("/projects/jobs", post(submit_project_job_endpoint))
@@ -122,6 +130,189 @@ async fn solve_poisson_endpoint(
         residual_norm: result.diagnostics.residual_norm,
         diagnostics: DiagnosticsResponse::from(result.diagnostics),
     }))
+}
+
+async fn solve_elasticity_endpoint(
+    Json(request): Json<SolveElasticityRequest>,
+) -> Result<Json<SolveVectorResponse>, ApiError> {
+    let mesh = mesh_from_request(&request.mesh)?;
+    let material = ElasticityMaterial {
+        young_modulus: request.problem.material.young_modulus,
+        poisson_ratio: request.problem.material.poisson_ratio,
+        model: match request.problem.material.model.to_lowercase().as_str() {
+            "plane_strain" => ElasticityModel::PlaneStrain,
+            _ => ElasticityModel::PlaneStress,
+        },
+    };
+    let problem = ElasticityProblem {
+        material,
+        thickness: request.problem.thickness,
+        constraints: request
+            .problem
+            .constraints
+            .into_iter()
+            .map(|entry| kepler::DisplacementConstraint {
+                node: entry.node,
+                component: match entry.component.to_lowercase().as_str() {
+                    "y" => kepler::DisplacementComponent::Y,
+                    _ => kepler::DisplacementComponent::X,
+                },
+                value: entry.value,
+            })
+            .collect(),
+        forces: request
+            .problem
+            .forces
+            .into_iter()
+            .map(|entry| kepler::NodalForce {
+                node: entry.node,
+                fx: if entry.component.eq_ignore_ascii_case("x") {
+                    entry.value
+                } else {
+                    0.0
+                },
+                fy: if entry.component.eq_ignore_ascii_case("y") {
+                    entry.value
+                } else {
+                    0.0
+                },
+            })
+            .collect(),
+    };
+    let options = request
+        .solver_options
+        .unwrap_or_default()
+        .try_into()
+        .map_err(ApiError::message)?;
+    let result = solve_elasticity_with_solver(&mesh, &problem, options)?;
+    let values: Vec<f64> = result
+        .displacements
+        .into_iter()
+        .flat_map(|entry| entry.to_vec())
+        .collect();
+    Ok(Json(SolveVectorResponse {
+        values,
+        iterations: result.diagnostics.iterations,
+        residual_norm: result.diagnostics.residual_norm,
+        diagnostics: DiagnosticsResponse::from(result.diagnostics),
+    }))
+}
+
+async fn solve_heat_endpoint(
+    Json(request): Json<SolveHeatRequest>,
+) -> Result<Json<SolveVectorResponse>, ApiError> {
+    let mesh = mesh_from_request(&request.mesh)?;
+    let source = request.problem.source_constant;
+    let problem = SteadyHeatProblem {
+        thermal_conductivity: request.problem.thermal_conductivity,
+        heat_generation: move |_, _| source,
+        prescribed_temperatures: request
+            .problem
+            .dirichlet
+            .into_iter()
+            .map(|entry| (entry.node, entry.value))
+            .collect(),
+    };
+    let options = request
+        .solver_options
+        .unwrap_or_default()
+        .try_into()
+        .map_err(ApiError::message)?;
+    let result = solve_steady_heat_with_solver(&mesh, &problem, options)?;
+    Ok(Json(SolveVectorResponse {
+        values: result.temperatures,
+        iterations: result.diagnostics.iterations,
+        residual_norm: result.diagnostics.residual_norm,
+        diagnostics: DiagnosticsResponse::from(result.diagnostics),
+    }))
+}
+
+async fn solve_modal_endpoint(
+    Json(request): Json<SolveModalRequest>,
+) -> Result<Json<SolveVectorResponse>, ApiError> {
+    let mesh = mesh_from_request(&request.mesh)?;
+    let material = ElasticityMaterial {
+        young_modulus: request.problem.material.young_modulus,
+        poisson_ratio: request.problem.material.poisson_ratio,
+        model: match request.problem.material.model.to_lowercase().as_str() {
+            "plane_strain" => ElasticityModel::PlaneStrain,
+            _ => ElasticityModel::PlaneStress,
+        },
+    };
+    let problem = ModalProblem {
+        elasticity: ElasticityProblem {
+            material,
+            thickness: request.problem.thickness,
+            constraints: request
+                .problem
+                .constraints
+                .into_iter()
+                .map(|entry| kepler::DisplacementConstraint {
+                    node: entry.node,
+                    component: match entry.component.to_lowercase().as_str() {
+                        "y" => kepler::DisplacementComponent::Y,
+                        _ => kepler::DisplacementComponent::X,
+                    },
+                    value: entry.value,
+                })
+                .collect(),
+            forces: vec![],
+        },
+        density: request.problem.density,
+        mode_count: request.problem.requested_modes,
+    };
+    let result = solve_modal(&mesh, &problem)?;
+    let values: Vec<f64> = result.modes.into_iter().map(|mode| mode.frequency_hz).collect();
+    Ok(Json(SolveVectorResponse {
+        values,
+        iterations: 0,
+        residual_norm: 0.0,
+        diagnostics: DiagnosticsResponse::default(),
+    }))
+}
+
+async fn solve_diffusion_endpoint(
+    Json(request): Json<SolveDiffusionRequest>,
+) -> Result<Json<SolveVectorResponse>, ApiError> {
+    let mesh = mesh_from_request(&request.mesh)?;
+    let source = request.problem.source_constant;
+    let problem = DiffusionReactionProblem {
+        diffusivity: request.problem.diffusivity,
+        reaction_rate: request.problem.reaction_rate,
+        source: move |_, _| source,
+        dirichlet: request
+            .problem
+            .dirichlet
+            .into_iter()
+            .map(|entry| (entry.node, entry.value))
+            .collect(),
+    };
+    let options = request
+        .solver_options
+        .unwrap_or_default()
+        .try_into()
+        .map_err(ApiError::message)?;
+    let result = solve_diffusion_reaction_with_solver(&mesh, &problem, options)?;
+    Ok(Json(SolveVectorResponse {
+        values: result.values,
+        iterations: result.diagnostics.iterations,
+        residual_norm: result.diagnostics.residual_norm,
+        diagnostics: DiagnosticsResponse::from(result.diagnostics),
+    }))
+}
+
+fn mesh_from_request(mesh: &MeshRequest) -> Result<Mesh, ApiError> {
+    Mesh::new(
+        mesh.points
+            .iter()
+            .map(|point| Point2::new(point.x, point.y))
+            .collect(),
+        mesh.triangles
+            .iter()
+            .map(|triangle| Tri3::new(triangle.nodes))
+            .collect(),
+    )
+    .map_err(ApiError::from)
 }
 
 async fn validate_project_endpoint(
@@ -545,6 +736,35 @@ fn solve_project(project: &ProjectFile) -> Result<ProjectSolveResponse, ApiError
                     diagnostics: DiagnosticsResponse::default(),
                 }
             }
+            ProjectPhysics::NonlinearElasticity(_) => {
+                let (_mesh, assembly, options) = job_to_nonlinear_continuum(job)?;
+                let result = kepler::solve_nonlinear_continuum(&assembly, options)
+                    .map_err(|error| ApiError::message(error.to_string()))?;
+                let flat_values = result.displacements_history.last().cloned().unwrap_or_default();
+                ProjectSolveJobResponse {
+                    id: job.id.clone(),
+                    status: "completed",
+                    physics: "nonlinear_elasticity",
+                    values: flat_values,
+                    iterations: 0,
+                    residual_norm: 0.0,
+                    diagnostics: DiagnosticsResponse::default(),
+                }
+            }
+            ProjectPhysics::Contact(_) => {
+                let (_mesh, assembly, options) = job_to_contact(job)?;
+                let result = kepler::solve_contact_static(&assembly, options)
+                    .map_err(|error| ApiError::message(error.to_string()))?;
+                ProjectSolveJobResponse {
+                    id: job.id.clone(),
+                    status: "completed",
+                    physics: "contact",
+                    values: result.displacements,
+                    iterations: result.newton_iterations,
+                    residual_norm: result.max_penetration,
+                    diagnostics: DiagnosticsResponse::default(),
+                }
+            }
         };
         jobs.push(job_response);
     }
@@ -591,6 +811,36 @@ struct HealthResponse {
 struct SolvePoissonRequest {
     mesh: MeshRequest,
     problem: ProblemRequest,
+    #[serde(default)]
+    solver_options: Option<SolverOptionsRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SolveElasticityRequest {
+    mesh: MeshRequest,
+    problem: ElasticityProblemRequest,
+    #[serde(default)]
+    solver_options: Option<SolverOptionsRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SolveHeatRequest {
+    mesh: MeshRequest,
+    problem: HeatProblemRequest,
+    #[serde(default)]
+    solver_options: Option<SolverOptionsRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SolveModalRequest {
+    mesh: MeshRequest,
+    problem: ModalProblemRequest,
+}
+
+#[derive(Debug, Deserialize)]
+struct SolveDiffusionRequest {
+    mesh: MeshRequest,
+    problem: DiffusionProblemRequest,
     #[serde(default)]
     solver_options: Option<SolverOptionsRequest>,
 }
@@ -653,6 +903,69 @@ struct ProblemRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct ElasticityProblemRequest {
+    material: ElasticityMaterialRequest,
+    thickness: f64,
+    #[serde(default)]
+    constraints: Vec<ElasticityConstraintRequest>,
+    #[serde(default)]
+    forces: Vec<ElasticityForceRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ElasticityMaterialRequest {
+    young_modulus: f64,
+    poisson_ratio: f64,
+    #[serde(default = "default_plane_stress_model")]
+    model: String,
+}
+
+fn default_plane_stress_model() -> String {
+    "plane_stress".to_string()
+}
+
+#[derive(Debug, Deserialize)]
+struct ElasticityConstraintRequest {
+    node: usize,
+    component: String,
+    value: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ElasticityForceRequest {
+    node: usize,
+    component: String,
+    value: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct HeatProblemRequest {
+    thermal_conductivity: f64,
+    source_constant: f64,
+    #[serde(default)]
+    dirichlet: Vec<DirichletRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModalProblemRequest {
+    material: ElasticityMaterialRequest,
+    thickness: f64,
+    density: f64,
+    requested_modes: usize,
+    #[serde(default)]
+    constraints: Vec<ElasticityConstraintRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DiffusionProblemRequest {
+    diffusivity: f64,
+    reaction_rate: f64,
+    source_constant: f64,
+    #[serde(default)]
+    dirichlet: Vec<DirichletRequest>,
+}
+
+#[derive(Debug, Deserialize)]
 struct SourceRequest {
     constant: f64,
 }
@@ -707,6 +1020,14 @@ impl TryFrom<SolverOptionsRequest> for LinearSolverOptions {
 
 #[derive(Debug, Serialize)]
 struct SolvePoissonResponse {
+    values: Vec<f64>,
+    iterations: usize,
+    residual_norm: f64,
+    diagnostics: DiagnosticsResponse,
+}
+
+#[derive(Debug, Serialize)]
+struct SolveVectorResponse {
     values: Vec<f64>,
     iterations: usize,
     residual_norm: f64,
@@ -987,6 +1308,18 @@ impl From<kepler::FileIoError> for ApiError {
     }
 }
 
+impl From<kepler::fem::diffusion_reaction::DiffusionReactionError> for ApiError {
+    fn from(value: kepler::fem::diffusion_reaction::DiffusionReactionError) -> Self {
+        Self::bad_request(value)
+    }
+}
+
+impl From<kepler::fem::heat::TransientHeatError> for ApiError {
+    fn from(value: kepler::fem::heat::TransientHeatError) -> Self {
+        Self::bad_request(value)
+    }
+}
+
 impl Default for DiagnosticsResponse {
     fn default() -> Self {
         Self {
@@ -1007,6 +1340,8 @@ fn physics_name(physics: &ProjectPhysics) -> &'static str {
         ProjectPhysics::Modal(_) => "modal",
         ProjectPhysics::Modal3d(_) => "modal_3d",
         ProjectPhysics::Structural(_) => "structural",
+        ProjectPhysics::NonlinearElasticity(_) => "nonlinear_elasticity",
+        ProjectPhysics::Contact(_) => "contact",
     }
 }
 
