@@ -81,12 +81,9 @@ pub fn write_hdf5_result(
 ) -> Result<(), ResultIoError> {
     #[cfg(feature = "hdf5")]
     {
-        use hdf5::prelude::*;
+        use hdf5::File;
         let path = path.as_ref();
-        let file = File::create(path).map_err(|source| ResultIoError::Write {
-            path: path.to_owned(),
-            source,
-        })?;
+        let file = File::create(path).map_err(|error| ResultIoError::Hdf5(error.to_string()))?;
         let group = file
             .create_group("mesh")
             .map_err(|error| ResultIoError::Hdf5(error.to_string()))?;
