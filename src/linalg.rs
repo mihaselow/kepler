@@ -1733,7 +1733,7 @@ fn residual_norm(matrix: &CsMat<f64>, values: &[f64], rhs: &[f64]) -> f64 {
         .sqrt()
 }
 
-fn axpy(alpha: f64, x: &[f64], y: &mut [f64]) {
+pub fn axpy(alpha: f64, x: &[f64], y: &mut [f64]) {
     for (y_value, x_value) in y.iter_mut().zip(x) {
         *y_value += alpha * x_value;
     }
@@ -1774,7 +1774,7 @@ fn dot(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b).map(|(a, b)| a * b).sum()
 }
 
-fn norm(values: &[f64]) -> f64 {
+pub fn norm(values: &[f64]) -> f64 {
     dot(values, values).sqrt()
 }
 
@@ -1789,4 +1789,248 @@ fn scale(alpha: f64, values: &mut [f64]) {
     for value in values {
         *value *= alpha;
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RiksSolverOptions {
+    pub max_steps: usize,
+    pub max_iterations_per_step: usize,
+    pub tolerance: f64,
+    pub initial_arc_length: f64,
+    pub min_arc_length: f64,
+    pub max_arc_length: f64,
+    pub target_iterations: usize,
+    pub linear_solver: LinearSolverOptions,
+}
+
+impl Default for RiksSolverOptions {
+    fn default() -> Self {
+        Self {
+            max_steps: 50,
+            max_iterations_per_step: 15,
+            tolerance: 1e-6,
+            initial_arc_length: 0.05,
+            min_arc_length: 1e-5,
+            max_arc_length: 0.5,
+            target_iterations: 5,
+            linear_solver: LinearSolverOptions::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RiksStepResult {
+    pub step: usize,
+    pub lambda: f64,
+    pub values: Vec<f64>,
+    pub iterations: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RiksResult {
+    pub history: Vec<RiksStepResult>,
+    pub converged: bool,
+}
+
+pub trait ArcLengthSystem {
+    fn dimension(&self) -> usize;
+    fn internal_force(&self, u: &[f64]) -> Vec<f64>;
+    fn external_force(&self) -> Vec<f64>;
+    fn tangent_stiffness(&self, u: &[f64]) -> CsMat<f64>;
+    fn residual(&self, u: &[f64], lambda: f64) -> Vec<f64>;
+}
+
+pub fn riks_solve<S: ArcLengthSystem>(
+    system: &S,
+    initial_values: Vec<f64>,
+    options: RiksSolverOptions,
+) -> Result<RiksResult, LinalgError> {
+    let n = system.dimension();
+    if initial_values.len() != n {
+        return Err(LinalgError::DimensionMismatch {
+            matrix_dim: n,
+            rhs_len: initial_values.len(),
+        });
+    }
+
+    let mut u = initial_values;
+    let mut lambda = 0.0;
+
+    let mut u_n = u.clone();
+    let mut lambda_n = lambda;
+
+    let mut ds = options.initial_arc_length;
+    let mut history = Vec::new();
+
+    // Save step 0
+    history.push(RiksStepResult {
+        step: 0,
+        lambda,
+        values: u.clone(),
+        iterations: 0,
+    });
+
+    let f_ext = system.external_force();
+    let f_ext_norm = norm(&f_ext);
+    if f_ext_norm < 1.0e-14 {
+        return Err(LinalgError::Breakdown); // No external load to trace
+    }
+
+    let mut prev_du = vec![0.0; n];
+
+    for step in 1..=options.max_steps {
+        let mut step_converged = false;
+
+        while !step_converged {
+            if ds < options.min_arc_length {
+                return Err(LinalgError::NonlinearNonConverged {
+                    iterations: step,
+                    residual_norm: ds,
+                });
+            }
+
+            // Predictor step (k = 0)
+            let kt = system.tangent_stiffness(&u_n);
+            let du_f = match solve_linear_system(&kt, &f_ext, options.linear_solver.clone()) {
+                Ok(r) => r.values,
+                Err(_) => {
+                    // Tangent stiffness might be singular near limit point, try smaller arc length
+                    ds /= 2.0;
+                    continue;
+                }
+            };
+
+            let du_f_norm = norm(&du_f);
+            if du_f_norm < 1.0e-14 {
+                ds /= 2.0;
+                continue;
+            }
+
+            // Determine sign of load factor increment
+            let sign_dl = if step == 1 {
+                1.0
+            } else {
+                let dot_prod = dot(&prev_du, &du_f);
+                if dot_prod >= 0.0 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            };
+
+            let delta_lambda = sign_dl * ds / du_f_norm;
+            let mut delta_u = vec![0.0; n];
+            axpy(delta_lambda, &du_f, &mut delta_u);
+
+            // Predictor state
+            let mut u_k = u_n.clone();
+            axpy(1.0, &delta_u, &mut u_k);
+            let mut lambda_k = lambda_n + delta_lambda;
+
+            let mut converged_iter = None;
+            for iter in 1..=options.max_iterations_per_step {
+                let r = system.residual(&u_k, lambda_k);
+                let r_norm = norm(&r);
+                if r_norm <= options.tolerance {
+                    converged_iter = Some(iter);
+                    break;
+                }
+
+                let kt_k = system.tangent_stiffness(&u_k);
+                let neg_r: Vec<_> = r.iter().map(|&x| -x).collect();
+
+                // Solve K du_r = -R
+                let du_r = match solve_linear_system(&kt_k, &neg_r, options.linear_solver.clone()) {
+                    Ok(res) => res.values,
+                    Err(_) => {
+                        converged_iter = None;
+                        break; // singular or failed to solve, break iter loop to cut step
+                    }
+                };
+
+                // Solve K du_f = F_ext
+                let du_f_k = match solve_linear_system(&kt_k, &f_ext, options.linear_solver.clone()) {
+                    Ok(res) => res.values,
+                    Err(_) => {
+                        converged_iter = None;
+                        break;
+                    }
+                };
+
+                // Solve quadratic constraint: (Du_k + du_r + dlambda * du_f_k)^2 = ds^2
+                // Let a = du_f_k
+                // Let b = (u_k - u_n) + du_r
+                let mut du_k = vec![0.0; n];
+                for i in 0..n {
+                    du_k[i] = u_k[i] - u_n[i];
+                }
+
+                let mut b = du_k.clone();
+                axpy(1.0, &du_r, &mut b);
+
+                let a_coef = dot(&du_f_k, &du_f_k);
+                let b_coef = 2.0 * dot(&du_f_k, &b);
+                let c_coef = dot(&b, &b) - ds * ds;
+
+                let disc = b_coef * b_coef - 4.0 * a_coef * c_coef;
+                if disc < 0.0 {
+                    converged_iter = None;
+                    break; // complex roots, break iter loop to cut step
+                }
+
+                let d_lambda1 = (-b_coef + disc.sqrt()) / (2.0 * a_coef);
+                let d_lambda2 = (-b_coef - disc.sqrt()) / (2.0 * a_coef);
+
+                // Choose root that maximizes the dot product with du_k
+                let mut u1 = b.clone();
+                axpy(d_lambda1, &du_f_k, &mut u1);
+                let mut u2 = b.clone();
+                axpy(d_lambda2, &du_f_k, &mut u2);
+
+                let dot1 = dot(&u1, &du_k);
+                let dot2 = dot(&u2, &du_k);
+
+                let d_lambda = if dot1 >= dot2 { d_lambda1 } else { d_lambda2 };
+
+                let mut corr_u = du_r;
+                axpy(d_lambda, &du_f_k, &mut corr_u);
+
+                axpy(1.0, &corr_u, &mut u_k);
+                lambda_k += d_lambda;
+            }
+
+            if let Some(iters) = converged_iter {
+                // Converged step!
+                u = u_k;
+                lambda = lambda_k;
+
+                for i in 0..n {
+                    prev_du[i] = u[i] - u_n[i];
+                }
+
+                u_n = u.clone();
+                lambda_n = lambda;
+
+                history.push(RiksStepResult {
+                    step,
+                    lambda,
+                    values: u.clone(),
+                    iterations: iters,
+                });
+
+                // Adaptive arc length adjustment
+                let factor = (options.target_iterations as f64 / iters as f64).sqrt();
+                ds = (ds * factor).clamp(options.min_arc_length, options.max_arc_length);
+                step_converged = true;
+            } else {
+                // Cut step size and retry
+                ds /= 2.0;
+            }
+        }
+    }
+
+    Ok(RiksResult {
+        history,
+        converged: true,
+    })
 }

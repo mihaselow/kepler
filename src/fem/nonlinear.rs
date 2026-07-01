@@ -182,10 +182,65 @@ impl NonlinearSystem for NonlinearTrussAssembly {
     }
 }
 
+impl crate::linalg::ArcLengthSystem for NonlinearTrussAssembly {
+    fn dimension(&self) -> usize {
+        self.num_dofs
+    }
+
+    fn internal_force(&self, u: &[f64]) -> Vec<f64> {
+        let mut f_int = vec![0.0; self.num_dofs];
+
+        for el in &self.elements {
+            let f_local = el.local_force(&self.points, u);
+            let n1 = el.nodes[0];
+            let n2 = el.nodes[1];
+
+            f_int[n1 * 2] += f_local[0];
+            f_int[n1 * 2 + 1] += f_local[1];
+            f_int[n2 * 2] += f_local[2];
+            f_int[n2 * 2 + 1] += f_local[3];
+        }
+        f_int
+    }
+
+    fn external_force(&self) -> Vec<f64> {
+        let mut f_ext = vec![0.0; self.num_dofs];
+        for &(node, comp, val) in &self.external_forces {
+            f_ext[node * 2 + comp] += val;
+        }
+        f_ext
+    }
+
+    fn tangent_stiffness(&self, u: &[f64]) -> CsMat<f64> {
+        self.jacobian(u)
+    }
+
+    fn residual(&self, u: &[f64], lambda: f64) -> Vec<f64> {
+        let f_int = self.internal_force(u);
+        let mut f_ext = vec![0.0; self.num_dofs];
+        for &(node, comp, val) in &self.external_forces {
+            f_ext[node * 2 + comp] += val;
+        }
+
+        let mut r = vec![0.0; self.num_dofs];
+        for i in 0..self.num_dofs {
+            r[i] = f_int[i] - lambda * f_ext[i];
+        }
+
+        // Enforce boundary conditions
+        for &(node, comp, val) in &self.dirichlet_boundary {
+            let dof = node * 2 + comp;
+            r[dof] = u[dof] - val;
+        }
+
+        r
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::linalg::{NonlinearSolverOptions, newton_solve};
+    use crate::linalg::{NonlinearSolverOptions, newton_solve, riks_solve, RiksSolverOptions};
 
     #[test]
     fn test_von_mises_snap_through() {
@@ -259,5 +314,89 @@ mod tests {
         let u_y_apex_load = result_load.values[3];
         assert!(u_y_apex_load < 0.0);
         assert!(u_y_apex_load > -0.05);
+    }
+
+    #[test]
+    fn test_riks_von_mises_snap_through() {
+        let points = vec![
+            Point3::new([0.0, 0.0, 0.0]),
+            Point3::new([1.0, 0.1, 0.0]),
+            Point3::new([2.0, 0.0, 0.0]),
+        ];
+
+        let elements = vec![
+            NonlinearTrussElement {
+                nodes: [0, 1],
+                area: 1e-4,
+                young_modulus: 200e9,
+            },
+            NonlinearTrussElement {
+                nodes: [1, 2],
+                area: 1e-4,
+                young_modulus: 200e9,
+            },
+        ];
+
+        let dirichlet_boundary = vec![
+            (0, 0, 0.0),
+            (0, 1, 0.0),
+            (2, 0, 0.0),
+            (2, 1, 0.0),
+        ];
+
+        // Apex downward force. Limit load of this structure is roughly ~70,000 N.
+        // We apply a reference downward force of -20,000 N.
+        let external_forces = vec![(1, 1, -20000.0)];
+
+        let assembly = NonlinearTrussAssembly {
+            points,
+            elements,
+            external_forces,
+            dirichlet_boundary,
+            num_dofs: 6,
+        };
+
+        let initial_values = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        let mut riks_opts = RiksSolverOptions::default();
+        riks_opts.initial_arc_length = 0.02;
+        riks_opts.max_steps = 40;
+        riks_opts.tolerance = 1e-5;
+
+        let result = riks_solve(&assembly, initial_values, riks_opts).unwrap();
+
+        let mut peak_lambda = 0.0;
+        let mut valley_lambda = f64::INFINITY;
+        let mut passed_limit_point = false;
+        let mut passed_snap_through = false;
+
+        for step in &result.history {
+            let u_y = step.values[3];
+
+            // Peak limit point analysis (before snapping flat at u_y = -0.1)
+            if u_y > -0.05 && step.lambda > peak_lambda {
+                peak_lambda = step.lambda;
+            }
+
+            // Once apex displacement goes past -0.05, we should see lambda drop
+            if u_y < -0.05 && u_y > -0.15 {
+                passed_limit_point = true;
+                if step.lambda < valley_lambda {
+                    valley_lambda = step.lambda;
+                }
+            }
+
+            if u_y < -0.15 {
+                passed_snap_through = true;
+            }
+        }
+
+        assert!(passed_limit_point, "Should pass the limit point");
+        assert!(passed_snap_through, "Should snap all the way through");
+        assert!(
+            peak_lambda > valley_lambda,
+            "Peak load factor ({}) must exceed valley load factor ({}) showing load shedding",
+            peak_lambda,
+            valley_lambda
+        );
     }
 }

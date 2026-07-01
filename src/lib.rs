@@ -53,6 +53,17 @@ pub use fem::modal::{
     solve_modal, solve_modal_3d,
 };
 pub use fem::nonlinear::{NonlinearTrussAssembly, NonlinearTrussElement};
+pub use fem::nonlinear_continuum::{
+    NonlinearContinuumAssembly, NonlinearContinuumResult, NonlinearContinuumSolverOptions,
+    solve_nonlinear_continuum,
+};
+pub use fem::contact::{
+    BoundarySegment, SpatialHashGrid2D, extract_boundary_segments,
+    ContactPair, evaluate_penalty_contact, assemble_penalty_contact,
+    evaluate_augmented_contact, assemble_augmented_contact,
+};
+pub use fem::material::{MaterialModel, MaterialState};
+pub use fem::material::plasticity::J2PlasticMaterial;
 pub use fem::poisson::{
     PoissonProblem, PoissonProblem3D, PoissonResult, PoissonSolverResult, solve_poisson,
     solve_poisson_3d, solve_poisson_3d_with_solver, solve_poisson_with_solver,
@@ -82,13 +93,14 @@ pub use io::{
     vtk::{VtkScalarField, format_vtk_legacy, write_vtk_legacy_file},
 };
 pub use linalg::{
-    ConfiguredLinearSolver, DiagonalDiagnostics, LanczosEigenResult, LinalgError, LinearSolver,
-    LinearSolverBackend, LinearSolverOptions, MatrixDiagnostics, NewmarkSolverOptions,
+    ArcLengthSystem, ConfiguredLinearSolver, DiagonalDiagnostics, LanczosEigenResult, LinalgError,
+    LinearSolver, LinearSolverBackend, LinearSolverOptions, MatrixDiagnostics, NewmarkSolverOptions,
     NewmarkStepResult, NonlinearSolverDiagnostics, NonlinearSolverOptions, NonlinearSolverResult,
-    NonlinearSystem, PreconditionerKind, SolverDiagnostics, SolverOptions, SparsityStats,
-    SpdHeuristics, SymmetryDiagnostics, TransientSolverOptions, TransientStepResult,
-    analyze_matrix, newton_solve, solve_harmonic_response, solve_lanczos_modes,
-    solve_linear_system, solve_linear_transient, solve_newmark_transient,
+    NonlinearSystem, PreconditionerKind, RiksResult, RiksSolverOptions, RiksStepResult,
+    SolverDiagnostics, SolverOptions, SparsityStats, SpdHeuristics, SymmetryDiagnostics,
+    TransientSolverOptions, TransientStepResult, analyze_matrix, axpy, newton_solve, norm,
+    riks_solve, solve_harmonic_response, solve_lanczos_modes, solve_linear_system,
+    solve_linear_transient, solve_newmark_transient,
 };
 pub use mesh::{
     Cell, CellId, ElementKind, EntityDimension, FacetId, FieldId, MaterialId, Mesh, MeshError,
