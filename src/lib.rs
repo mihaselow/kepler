@@ -53,6 +53,8 @@ pub use fem::modal::{
     solve_modal, solve_modal_3d,
 };
 pub use fem::nonlinear::{NonlinearTrussAssembly, NonlinearTrussElement};
+pub use fem::material::{MaterialModel, MaterialState};
+pub use fem::material::plasticity::J2PlasticMaterial;
 pub use fem::poisson::{
     PoissonProblem, PoissonProblem3D, PoissonResult, PoissonSolverResult, solve_poisson,
     solve_poisson_3d, solve_poisson_3d_with_solver, solve_poisson_with_solver,
