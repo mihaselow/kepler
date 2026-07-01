@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{collections::BTreeSet, fs, path::Path, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -78,6 +78,9 @@ pub enum ProjectPhysics {
     #[serde(rename = "modal_3d")]
     Modal3d(ProjectModalProblem3D),
     Structural(ProjectStructuralProblem),
+    #[serde(rename = "nonlinear_elasticity")]
+    NonlinearElasticity(ProjectNonlinearElasticityProblem),
+    Contact(ProjectContactProblem),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -164,6 +167,92 @@ pub struct ProjectElasticityForce3D {
     pub node: usize,
     pub component: String,
     pub value: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectNonlinearElasticityProblem {
+    pub material: ProjectPlasticMaterial,
+    pub thickness: f64,
+    #[serde(default)]
+    pub plane_strain: bool,
+    #[serde(default)]
+    pub constraints: Vec<ProjectElasticityConstraint>,
+    #[serde(default)]
+    pub forces: Vec<ProjectElasticityForce>,
+    #[serde(default = "default_nonlinear_num_steps")]
+    pub num_steps: usize,
+    #[serde(default = "default_nonlinear_max_iterations")]
+    pub max_iterations: usize,
+    #[serde(default = "default_nonlinear_tolerance")]
+    pub tolerance: f64,
+    #[serde(default)]
+    pub linear_solver: ProjectLinearSolverOptions,
+}
+
+fn default_nonlinear_num_steps() -> usize {
+    10
+}
+
+fn default_nonlinear_max_iterations() -> usize {
+    20
+}
+
+fn default_nonlinear_tolerance() -> f64 {
+    1.0e-5
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectPlasticMaterial {
+    pub young_modulus: f64,
+    pub poisson_ratio: f64,
+    pub yield_stress: f64,
+    pub hardening_modulus: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectContactProblem {
+    pub material: ProjectElasticityMaterial,
+    pub thickness: f64,
+    #[serde(default)]
+    pub constraints: Vec<ProjectElasticityConstraint>,
+    #[serde(default)]
+    pub forces: Vec<ProjectElasticityForce>,
+    pub master_segments: Vec<ProjectContactSegment>,
+    pub slave_nodes: Vec<usize>,
+    pub penalty: f64,
+    #[serde(default)]
+    pub use_augmented: bool,
+    #[serde(default = "default_contact_max_newton_iterations")]
+    pub max_newton_iterations: usize,
+    #[serde(default = "default_contact_max_augmented_iterations")]
+    pub max_augmented_iterations: usize,
+    #[serde(default = "default_contact_tolerance")]
+    pub tolerance: f64,
+    #[serde(default = "default_contact_penetration_tolerance")]
+    pub penetration_tolerance: f64,
+    #[serde(default)]
+    pub linear_solver: ProjectLinearSolverOptions,
+}
+
+fn default_contact_max_newton_iterations() -> usize {
+    25
+}
+
+fn default_contact_max_augmented_iterations() -> usize {
+    10
+}
+
+fn default_contact_tolerance() -> f64 {
+    1.0e-6
+}
+
+fn default_contact_penetration_tolerance() -> f64 {
+    1.0e-8
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectContactSegment {
+    pub nodes: [usize; 2],
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -667,6 +756,12 @@ pub fn validate_job(job: &ProjectJob) -> Result<(), ProjectError> {
                 }
             })?;
         }
+        ProjectPhysics::NonlinearElasticity(_) | ProjectPhysics::Contact(_) => {
+            let _mesh = Mesh::try_from(job.mesh.clone()).map_err(|source| ProjectError::Mesh {
+                job_id: job.id.clone(),
+                source,
+            })?;
+        }
     }
     Ok(())
 }
@@ -849,6 +944,153 @@ pub fn job_to_modal_3d(
         _ => Err(ProjectError::InvalidConfiguration {
             job_id: job.id.clone(),
             message: "expected modal_3d physics".to_string(),
+        }),
+    }
+}
+
+pub fn job_to_nonlinear_continuum(
+    job: &ProjectJob,
+) -> Result<
+    (
+        Mesh,
+        crate::fem::nonlinear_continuum::NonlinearContinuumAssembly,
+        crate::fem::nonlinear_continuum::NonlinearContinuumSolverOptions,
+    ),
+    ProjectError,
+> {
+    match &job.physics {
+        ProjectPhysics::NonlinearElasticity(problem) => {
+            let mesh = Mesh::try_from(job.mesh.clone()).map_err(|source| ProjectError::Mesh {
+                job_id: job.id.clone(),
+                source,
+            })?;
+            let num_dofs = mesh.node_count() * 2;
+            let material = Arc::new(crate::fem::material::plasticity::J2PlasticMaterial::new(
+                problem.material.young_modulus,
+                problem.material.poisson_ratio,
+                problem.material.yield_stress,
+                problem.material.hardening_modulus,
+            ));
+            let dirichlet_boundary = problem
+                .constraints
+                .iter()
+                .map(|c| {
+                    let comp = match c.component.to_lowercase().as_str() {
+                        "y" => 1,
+                        _ => 0,
+                    };
+                    (c.node, comp, c.value)
+                })
+                .collect();
+            let external_forces = problem
+                .forces
+                .iter()
+                .map(|f| {
+                    let comp = match f.component.to_lowercase().as_str() {
+                        "y" => 1,
+                        _ => 0,
+                    };
+                    (f.node, comp, f.value)
+                })
+                .collect();
+            let assembly = crate::fem::nonlinear_continuum::NonlinearContinuumAssembly {
+                mesh,
+                thickness: problem.thickness,
+                is_plane_strain: problem.plane_strain,
+                material,
+                external_forces,
+                dirichlet_boundary,
+                contact: None,
+                num_dofs,
+            };
+            let options = crate::fem::nonlinear_continuum::NonlinearContinuumSolverOptions {
+                num_steps: problem.num_steps,
+                max_iterations: problem.max_iterations,
+                tolerance: problem.tolerance,
+                linear_solver: LinearSolverOptions::from(problem.linear_solver.clone()),
+            };
+            Ok((assembly.mesh.clone(), assembly, options))
+        }
+        _ => Err(ProjectError::InvalidConfiguration {
+            job_id: job.id.clone(),
+            message: "expected nonlinear_elasticity physics".to_string(),
+        }),
+    }
+}
+
+pub fn job_to_contact(
+    job: &ProjectJob,
+) -> Result<
+    (
+        Mesh,
+        crate::fem::contact::solve::ContactStaticAssembly,
+        crate::fem::contact::solve::ContactStaticSolverOptions,
+    ),
+    ProjectError,
+> {
+    match &job.physics {
+        ProjectPhysics::Contact(problem) => {
+            let mesh = Mesh::try_from(job.mesh.clone()).map_err(|source| ProjectError::Mesh {
+                job_id: job.id.clone(),
+                source,
+            })?;
+            let num_dofs = mesh.node_count() * 2;
+            let material = crate::ElasticityMaterial::from(problem.material.clone());
+            let dirichlet_boundary = problem
+                .constraints
+                .iter()
+                .map(|c| {
+                    let comp = match c.component.to_lowercase().as_str() {
+                        "y" => 1,
+                        _ => 0,
+                    };
+                    (c.node, comp, c.value)
+                })
+                .collect();
+            let external_forces = problem
+                .forces
+                .iter()
+                .map(|f| {
+                    let comp = match f.component.to_lowercase().as_str() {
+                        "y" => 1,
+                        _ => 0,
+                    };
+                    (f.node, comp, f.value)
+                })
+                .collect();
+            let master_segments = problem
+                .master_segments
+                .iter()
+                .map(|seg| crate::fem::contact::search::BoundarySegment { nodes: seg.nodes })
+                .collect();
+            let contact = crate::fem::contact::solve::ContactProblem {
+                master_segments,
+                slave_nodes: problem.slave_nodes.clone(),
+                penalty: problem.penalty,
+                use_augmented: problem.use_augmented,
+            };
+            let assembly = crate::fem::contact::solve::ContactStaticAssembly {
+                mesh,
+                material,
+                thickness: problem.thickness,
+                external_forces,
+                dirichlet_boundary,
+                contact,
+                num_dofs,
+            };
+            let max_newton_iterations = problem.max_newton_iterations;
+            let options = crate::fem::contact::solve::ContactStaticSolverOptions {
+                max_newton_iterations,
+                max_augmented_iterations: problem.max_augmented_iterations,
+                tolerance: problem.tolerance,
+                penetration_tolerance: problem.penetration_tolerance,
+                linear_solver: LinearSolverOptions::from(problem.linear_solver.clone()),
+            };
+            Ok((assembly.mesh.clone(), assembly, options))
+        }
+        _ => Err(ProjectError::InvalidConfiguration {
+            job_id: job.id.clone(),
+            message: "expected contact physics".to_string(),
         }),
     }
 }

@@ -270,6 +270,8 @@ fn inspect_project_file(project_path: PathBuf) -> Result<(), Box<dyn std::error:
             kepler::ProjectPhysics::Modal(_) => "modal",
             kepler::ProjectPhysics::Modal3d(_) => "modal_3d",
             kepler::ProjectPhysics::Structural(_) => "structural",
+            kepler::ProjectPhysics::NonlinearElasticity(_) => "nonlinear_elasticity",
+            kepler::ProjectPhysics::Contact(_) => "contact",
         };
         let points_count = job
             .mesh

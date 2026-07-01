@@ -42,6 +42,12 @@ pub use fem::elasticity::{
     TransientElasticityResult3D, TransientElasticityStep, TransientElasticityStep3D,
     solve_elasticity, solve_elasticity_3d, solve_elasticity_3d_with_solver,
     solve_elasticity_with_solver, solve_transient_elasticity, solve_transient_elasticity_3d,
+    solve_transient_elasticity_hht,
+};
+pub use fem::explicit::{
+    ExplicitDynamicsError, ExplicitDynamicsOptions, ExplicitDynamicsProblem,
+    ExplicitDynamicsResult, ExplicitDynamicsStep, estimate_critical_time_step,
+    solve_explicit_dynamics,
 };
 pub use fem::electrostatics::{
     ELECTROSTATIC_FORMULATION, ElectricPotentialResult, ElectricPotentialSolverResult,
@@ -88,6 +94,10 @@ pub use io::{
         infer_cad_format, plan_cad_meshing_command, validate_cad_meshing_workflow,
     },
     gmsh::{ImportedMesh, parse_gmsh_str, read_gmsh_file},
+    abaqus::{
+        AbaqusBoundary, AbaqusElement, AbaqusMaterial, AbaqusModel, AbaqusStep, abaqus_to_annotations,
+        abaqus_to_mesh_2d, parse_abaqus_str, read_abaqus_file,
+    },
     mesh::{parse_mesh_str, read_mesh_file},
     params::{PoissonFileConfig, SourceConfig, parse_params_str, read_params_file},
     project::{
@@ -95,21 +105,28 @@ pub use io::{
         ProjectLinearSolverBackend, ProjectLinearSolverOptions, ProjectMesh, ProjectOutput,
         ProjectOutputFormat, ProjectPhysics, ProjectPoint2, ProjectPoissonProblem,
         ProjectPreconditionerKind, ProjectSource, ProjectTriangle, default_project_solver_options,
-        format_project, job_to_elasticity, job_to_elasticity_3d, job_to_modal, job_to_modal_3d,
-        job_to_poisson, job_to_structural, parse_project_str, read_project_file, validate_job, validate_project,
+        format_project, job_to_contact, job_to_elasticity, job_to_elasticity_3d, job_to_modal,
+        job_to_modal_3d, job_to_nonlinear_continuum, job_to_poisson, job_to_structural,
+        parse_project_str, read_project_file, validate_job, validate_project,
+    },
+    result_format::{
+        KeplerResultCell, KeplerResultFile, KeplerResultMesh, KeplerResultStep, ResultIoError,
+        RESULT_SCHEMA_VERSION, read_json_result, write_hdf5_result, write_json_result,
+        write_result_file,
     },
     solution::{format_solution, write_solution_file},
     vtk::{VtkScalarField, format_vtk_legacy, write_vtk_legacy_file},
 };
 pub use linalg::{
-    ArcLengthSystem, ConfiguredLinearSolver, DiagonalDiagnostics, LanczosEigenResult, LinalgError,
+    ArcLengthSystem, ConfiguredLinearSolver, DiagonalDiagnostics, HhtSolverOptions, HhtStepResult,
+    LanczosEigenResult, LinalgError,
     LinearSolver, LinearSolverBackend, LinearSolverOptions, MatrixDiagnostics,
     NewmarkSolverOptions, NewmarkStepResult, NonlinearSolverDiagnostics, NonlinearSolverOptions,
     NonlinearSolverResult, NonlinearSystem, PreconditionerKind, RiksResult, RiksSolverOptions,
     RiksStepResult, SolverDiagnostics, SolverOptions, SparsityStats, SpdHeuristics,
     SymmetryDiagnostics, TransientSolverOptions, TransientStepResult, analyze_matrix, axpy,
     newton_solve, norm, riks_solve, solve_harmonic_response, solve_lanczos_modes,
-    solve_linear_system, solve_linear_transient, solve_newmark_transient,
+    solve_linear_system, solve_linear_transient, solve_newmark_transient, solve_hht_transient,
 };
 pub use mesh::{
     Cell, CellId, ElementKind, EntityDimension, FacetId, FieldId, MaterialId, Mesh, MeshError,
